@@ -22,18 +22,17 @@ Run:  uv run deepnash-train-async   (or: python -m deepnash_rbc.async_train)
 
 from __future__ import annotations
 
-import glob
 import os
 import queue
-import re
 import time
 from dataclasses import asdict
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import numpy as np
 import torch
 import torch.multiprocessing as mp
 
+from .checkpoints import checkpoint_path, find_latest_checkpoint, version_dir
 from .cli import config_from_args
 from .config import Config
 from .eval import evaluate
@@ -66,17 +65,6 @@ def _drain_latest(q: "mp.Queue"):
 
 
 # -- checkpoint resume -------------------------------------------------------
-def find_latest_checkpoint(checkpoint_dir: str) -> Optional[str]:
-    """Latest deepnash_async_<step>.pt in the dir, by step number (not mtime)."""
-    paths = glob.glob(os.path.join(checkpoint_dir, "deepnash_async_*.pt"))
-    best, best_step = None, -1
-    for p in paths:
-        m = re.search(r"deepnash_async_(\d+)\.pt$", os.path.basename(p))
-        if m and int(m.group(1)) > best_step:
-            best, best_step = p, int(m.group(1))
-    return best
-
-
 def load_resume(path: str, learner: RNaDLearner, device: torch.device) -> int:
     """Restore a learner from a checkpoint, tolerating older (net+step only)
     formats. Returns the learner step to resume from."""
@@ -133,7 +121,7 @@ def run_async(cfg: Config | None = None) -> None:
     learner = RNaDLearner(cfg, net, device)
     buffer = ReplayBuffer(cfg.train.buffer_capacity)
     metrics = MetricsLogger(cfg.train.metrics_path)
-    os.makedirs(cfg.train.checkpoint_dir, exist_ok=True)
+    os.makedirs(version_dir(cfg.train.checkpoint_dir), exist_ok=True)
 
     # resume before snapshotting init weights so actors start from the resumed net
     start_step = 0
@@ -143,7 +131,8 @@ def run_async(cfg: Config | None = None) -> None:
             path = find_latest_checkpoint(cfg.train.checkpoint_dir)
             if path is None:
                 raise RuntimeError(
-                    f"--resume: no deepnash_async_*.pt found in {cfg.train.checkpoint_dir}"
+                    "--resume: no deepnash_async_v*_*.pt found in "
+                    f"{cfg.train.checkpoint_dir} for the current version"
                 )
         start_step = load_resume(path, learner, device)
         print(f"[async] resumed from {path} at step {start_step}")
@@ -221,7 +210,8 @@ def run_async(cfg: Config | None = None) -> None:
 
             # 6) checkpoint
             if step > 0 and step % cfg.train.checkpoint_every == 0:
-                path = os.path.join(cfg.train.checkpoint_dir, f"deepnash_async_{step}.pt")
+                path = checkpoint_path(cfg.train.checkpoint_dir, step,
+                                       prefix="deepnash_async")
                 torch.save({"net": net.state_dict(), "step": step,
                             "opt": learner.opt.state_dict(),
                             "reg_net": learner.reg_net.state_dict(),
