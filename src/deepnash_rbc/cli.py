@@ -88,8 +88,9 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         const="auto",
         default=None,
         help="Resume deepnash-train-async from a checkpoint. Bare --resume picks "
-        "the latest deepnash_async_*.pt in --checkpoint-dir; pass a path to pick a "
-        "specific one. Restores weights+step (and optimizer/pi_reg if the "
+        "the latest checkpoint in --checkpoint-dir/v<version>/ (current project "
+        "version); pass a path to pick a specific one. Restores weights+step "
+        "(and optimizer/pi_reg if the "
         "checkpoint has them; older checkpoints don't, so those reset with a warning).",
     )
     p.add_argument(

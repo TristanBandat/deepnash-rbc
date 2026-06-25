@@ -18,6 +18,7 @@ from dataclasses import asdict
 
 import torch
 
+from .checkpoints import checkpoint_path, version_dir
 from .cli import config_from_args
 from .config import Config
 from .eval import evaluate
@@ -49,7 +50,7 @@ def main(cfg: Config | None = None) -> None:
     net = DeepNashNet(cfg.encoding, cfg.network).to(device)
     learner = RNaDLearner(cfg, net, device)
     buffer = ReplayBuffer(cfg.train.buffer_capacity)
-    os.makedirs(cfg.train.checkpoint_dir, exist_ok=True)
+    os.makedirs(version_dir(cfg.train.checkpoint_dir), exist_ok=True)
     metrics = MetricsLogger(cfg.train.metrics_path)
 
     print(f"[train] device={device} params={sum(p.numel() for p in net.parameters()):,}")
@@ -86,7 +87,7 @@ def main(cfg: Config | None = None) -> None:
             print(f"[eval {it}] {wr}")
 
         if it > 0 and it % cfg.train.checkpoint_every == 0:
-            path = os.path.join(cfg.train.checkpoint_dir, f"deepnash_{it}.pt")
+            path = checkpoint_path(cfg.train.checkpoint_dir, it, prefix="deepnash")
             torch.save({"net": net.state_dict(), "iter": it,
                         "net_cfg": asdict(cfg.network), "enc_cfg": asdict(cfg.encoding)}, path)
             print(f"[train] saved {path}")

@@ -17,6 +17,7 @@ from deepnash_rbc.agent import RNaDPlayer
 from deepnash_rbc.analysis import move_quality as mq
 from deepnash_rbc.analysis.engine import StockfishAnalyst
 from deepnash_rbc.eval import _make_opponent
+from deepnash_rbc.checkpoints import checkpoint_path
 from deepnash_rbc.play_session import load_net
 
 STEPS = [1000, 10000, 25000, 50000, 75000, 100000]
@@ -27,7 +28,7 @@ device = torch.device("cpu")
 
 
 def run_ckpt(step: int, analyst: StockfishAnalyst) -> dict:
-    net, enc = load_net(f"checkpoints/deepnash_async_{step}.pt", device)
+    net, enc = load_net(checkpoint_path("checkpoints", step), device)
     H = enc.history
     aggs = []
     wins = draws = losses = played = 0

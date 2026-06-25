@@ -22,9 +22,10 @@ from deepnash_rbc.agent import RNaDPlayer
 from deepnash_rbc.analysis import move_quality as mq
 from deepnash_rbc.analysis.engine import StockfishAnalyst
 from deepnash_rbc.eval import _make_opponent
+from deepnash_rbc.checkpoints import checkpoint_path
 from deepnash_rbc.play_session import load_net
 
-CKPT = "checkpoints/deepnash_async_100000.pt"
+CKPT = checkpoint_path("checkpoints", 100000)
 DEPTH = 16
 N_RANDOM = 40   # games vs RandomBot (alternating colours)
 N_SELF = 30     # self-play games (each yields both colours)

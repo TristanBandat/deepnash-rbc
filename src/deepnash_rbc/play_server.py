@@ -53,7 +53,13 @@ def index():
 @app.get("/api/checkpoints")
 def checkpoints():
     d = Path(_args.checkpoint_dir)
-    files = sorted((f.name for f in d.glob("*.pt")), reverse=True) if d.exists() else []
+    # recurse: checkpoints now live under v<version>/ subfolders. Return paths
+    # relative to the checkpoint dir so _get_net can join them back.
+    files = (
+        sorted((f.relative_to(d).as_posix() for f in d.rglob("*.pt")), reverse=True)
+        if d.exists()
+        else []
+    )
     return jsonify({"checkpoints": files})
 
 
