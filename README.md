@@ -7,7 +7,6 @@
 [![closed Pull Requests][closed_pulls-shield]][closed_pulls-url]
 [![closed Issues][closed_issues-shield]][closed_issues-url]
 
-
 <!-- PROJECT LOGO -->
 <p align="center">
   <h3 align="center">DeepNash for RBC</h3>
@@ -37,16 +36,14 @@
   </ol>
 </details>
 
-
-
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
-The project is being carried out by Tristan Bandat as his bachelor 
+The project is being carried out by Tristan Bandat as his bachelor
 thesis at the Johannes Kepler University in the Bachelor AI program.
 
-The article [Mastering the game of Stratego with model-free multiagent reinforcement 
-learning](https://www.science.org/doi/10.1126/science.add4679)[[1]](#1) serves as the basis.
+The article [Mastering the game of Stratego with model-free multiagent reinforcement
+learning][https://www.science.org/doi/10.1126/science.add4679]([1)](#1) serves as the basis.
 
 > Reconnaissance Blind Chess (RBC) is a chess variant designed for new research in artificial intelligence (AI).
 > RBC includes imperfect information, long-term strategy, explicit observations, and almost no common knowledge.
@@ -58,34 +55,27 @@ learning](https://www.science.org/doi/10.1126/science.add4679)[[1]](#1) serves a
 * [Pytorch](https://pytorch.org/)
 * [Vim](https://www.vim.org/)
 
-
-
 <!-- GETTING STARTED -->
 ## Getting Started
-
 
 ### Installation
 
 <!-- TODO -->
-   
 
 <!-- USAGE EXAMPLES -->
 ## Usage
 
 <!-- TODO -->
 
-
 <!-- ROADMAP -->
 ## Roadmap
 
 See the [open issues](https://github.com/TristanBandat/deepnash-rbc/issues) for a list of proposed features (and known issues).
 
-
-
 <!-- CONTRIBUTING -->
 ## Contributing
 
-Contributions are what make the open source community such an amazing place to learn, inspire, and create.<br> 
+Contributions are what make the open source community such an amazing place to learn, inspire, and create.<br>
 Any contributions you make are **greatly appreciated**.
 
 1. Fork the Project
@@ -94,12 +84,9 @@ Any contributions you make are **greatly appreciated**.
 4. Push to the Branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
-
-<!-- LICENSE -->
 ## License
 
 Distributed under the MIT License. See `LICENSE` for more information.
-
 
 <!-- CONTACT -->
 ## Contact
@@ -107,8 +94,6 @@ Distributed under the MIT License. See `LICENSE` for more information.
 Tristan Bandat - [@TBandat](https://twitter.com/TBandat)
 
 Project Link: [https://github.com/TristanBandat/deepnash-rbc](https://github.com/TristanBandat/deepnash-rbc)
-
-
 
 <!-- ACKNOWLEDGEMENTS 
 ## Acknowledgements
@@ -122,15 +107,14 @@ Project Link: [https://github.com/TristanBandat/deepnash-rbc](https://github.com
 <!-- References -->
 
 ## References
-<a id="1">[1]</a> 
+
+<a id="1">[1]</a>
 Julien Perolat et al. ,Mastering the game of Stratego with model-free multiagent reinforcement learning.<br>
 Science378,990-996(2022).DOI: [10.1126/science.add4679](https://www.science.org/doi/10.1126/science.add4679)
 
 <a id="2">[2]</a>
 Reconnaissance Blind Chess (RBC) by The Johns Hopkins University Applied Physics Laboratory LLC.<br>
 More information: [https://rbc.jhuapl.edu/](https://rbc.jhuapl.edu/)
-
-
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
