@@ -18,7 +18,7 @@ from dataclasses import asdict
 
 import torch
 
-from .checkpoints import checkpoint_path, version_dir
+from .checkpoints import checkpoint_path, ensure_version_config, version_dir
 from .cli import config_from_args
 from .config import Config
 from .eval import evaluate
@@ -51,6 +51,7 @@ def main(cfg: Config | None = None) -> None:
     learner = RNaDLearner(cfg, net, device)
     buffer = ReplayBuffer(cfg.train.buffer_capacity)
     os.makedirs(version_dir(cfg.train.checkpoint_dir), exist_ok=True)
+    ensure_version_config(cfg.train.checkpoint_dir, cfg)
     metrics = MetricsLogger(cfg.train.metrics_path)
 
     print(f"[train] device={device} params={sum(p.numel() for p in net.parameters()):,}")
