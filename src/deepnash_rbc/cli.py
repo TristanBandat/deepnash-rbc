@@ -57,6 +57,22 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         default=None,
         help="Path to the metrics JSONL (overrides the checkpoint-dir default).",
     )
+    p.add_argument(
+        "--channels",
+        type=int,
+        default=None,
+        help="ResNet torso width (NetworkConfig.channels). Bump with --blocks for "
+        "more capacity / stronger play. A larger net is shape-incompatible with "
+        "existing checkpoints, so bump the version in pyproject.toml too. Default: "
+        "config value.",
+    )
+    p.add_argument(
+        "--blocks",
+        type=int,
+        default=None,
+        help="ResNet torso depth (NetworkConfig.blocks). See --channels. Default: "
+        "config value.",
+    )
     p.add_argument("--device", default=None, help="cuda or cpu (default: config value).")
     p.add_argument("--seed", type=int, default=None, help="Override the training seed.")
     p.add_argument(
@@ -126,6 +142,11 @@ def config_from_args(argv: list[str] | None = None, prog: str | None = None) -> 
         env = _env_bool("DEEPNASH_FULL_ACTION_NEURD")
         if env is not None:
             cfg.rnad.full_action_neurd = env
+
+    if args.channels is not None:
+        cfg.network.channels = args.channels
+    if args.blocks is not None:
+        cfg.network.blocks = args.blocks
 
     if args.checkpoint_dir is not None:
         cfg.train.checkpoint_dir = args.checkpoint_dir
