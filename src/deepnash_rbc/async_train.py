@@ -32,7 +32,12 @@ import numpy as np
 import torch
 import torch.multiprocessing as mp
 
-from .checkpoints import checkpoint_path, find_latest_checkpoint, version_dir
+from .checkpoints import (
+    checkpoint_path,
+    ensure_version_config,
+    find_latest_checkpoint,
+    version_dir,
+)
 from .cli import config_from_args
 from .config import Config
 from .eval import evaluate
@@ -122,6 +127,8 @@ def run_async(cfg: Config | None = None) -> None:
     buffer = ReplayBuffer(cfg.train.buffer_capacity)
     metrics = MetricsLogger(cfg.train.metrics_path)
     os.makedirs(version_dir(cfg.train.checkpoint_dir), exist_ok=True)
+    cfg_path = ensure_version_config(cfg.train.checkpoint_dir, cfg)
+    print(f"[async] version config: {cfg_path}")
 
     # resume before snapshotting init weights so actors start from the resumed net
     start_step = 0

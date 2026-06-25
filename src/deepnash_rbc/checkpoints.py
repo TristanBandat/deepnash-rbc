@@ -16,11 +16,22 @@ without cracking open every ``.pt``.
 from __future__ import annotations
 
 import glob
+import json
 import os
 import re
-from typing import Optional
+from dataclasses import asdict
+from typing import TYPE_CHECKING, Optional
 
 from .version import get_version
+
+if TYPE_CHECKING:
+    from .config import Config
+
+# Sub-configs whose values determine the network's tensor shapes. A state_dict
+# is locked to these, so they must not change within a single version folder --
+# the drift guard below enforces that. Other knobs (lr, batch, eval, ...) are
+# free to vary between runs of the same version.
+ARCH_KEYS = ("network", "encoding")
 
 
 def version_dir(checkpoint_dir: str, version: Optional[str] = None) -> str:
@@ -59,3 +70,55 @@ def find_latest_checkpoint(
         if m and int(m.group(1)) > best_step:
             best, best_step = p, int(m.group(1))
     return best
+
+
+# -- per-version config manifest ---------------------------------------------
+def version_config_path(checkpoint_dir: str, version: Optional[str] = None) -> str:
+    """Path to a version's config manifest, e.g. ``checkpoints/v0.2.0/config.json``."""
+    return os.path.join(version_dir(checkpoint_dir, version), "config.json")
+
+
+def read_version_config(
+    checkpoint_dir: str, version: Optional[str] = None
+) -> Optional[dict]:
+    """Return the version's saved config dict, or ``None`` if not written yet."""
+    path = version_config_path(checkpoint_dir, version)
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
+def ensure_version_config(
+    checkpoint_dir: str, cfg: "Config", version: Optional[str] = None
+) -> str:
+    """Pin the full Config to ``v<version>/config.json`` (the manifest tying a
+    version's checkpoints to the hyperparameters that produced them).
+
+    First run of a version writes the file. Later runs of the same version
+    validate against it and raise if any architecture-determining sub-config
+    (see ``ARCH_KEYS``) differs -- that would mean the version folder holds
+    checkpoints with incompatible tensor shapes. The fix is to bump the project
+    version in pyproject.toml. Non-architecture knobs may differ freely.
+    """
+    path = version_config_path(checkpoint_dir, version)
+    # json round-trip normalizes tuples->lists so comparison matches the file.
+    current = json.loads(json.dumps(asdict(cfg)))
+
+    existing = read_version_config(checkpoint_dir, version)
+    if existing is not None:
+        for key in ARCH_KEYS:
+            if existing.get(key) != current.get(key):
+                raise RuntimeError(
+                    f"{key} config differs from {path}: this version's checkpoints "
+                    f"were trained with a different architecture and would fail to "
+                    f"load. Bump the version in pyproject.toml for a new layout.\n"
+                    f"  saved:   {existing.get(key)}\n"
+                    f"  current: {current.get(key)}"
+                )
+        return path
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(current, f, indent=2, sort_keys=True)
+    return path
