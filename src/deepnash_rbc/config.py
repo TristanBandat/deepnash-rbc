@@ -2,7 +2,7 @@
 
 All knobs live here so the rest of the code reads cleanly. Defaults target a
 single consumer NVIDIA GPU (e.g. 8-16 GB): a ~6-block, 128-channel ResNet that
-trains end-to-end without exotic memory tricks.
+trains end-to-end.
 """
 
 from __future__ import annotations
@@ -64,14 +64,16 @@ class RNaDConfig:
     # compile_net / amp DO touch numerics (kernel fusion / bf16), so they are
     # opt-in and excluded from the bit-identical guarantee -- A/B them on the GPU.
     compile_net: bool = False  # torch.compile the forward (eager state_dict kept)
-    amp: bool = False          # bf16 autocast on the forward (L40S-friendly)
+    amp: bool = False  # bf16 autocast on the forward (L40S-friendly)
 
 
 @dataclass
 class TrainConfig:
-    games_per_iter: int = 8  # self-play games collected before each learner update batch
+    games_per_iter: int = (
+        8  # self-play games collected before each learner update batch
+    )
     learner_steps_per_iter: int = 4
-    total_iters: int = 100_000
+    total_iters: int = 1_000_000
     batch_trajectories: int = 16  # trajectories sampled from buffer per learner step
     buffer_capacity: int = 4096
     num_actors: int = 1  # >1 uses torch.multiprocessing (see selfplay.py)
@@ -84,18 +86,21 @@ class TrainConfig:
     # or an explicit checkpoint path. Set via --resume on deepnash-train-async.
     resume: str | None = None
     # --- evaluation / skill metrics ---
-    eval_every: int = 50        # run a skill eval every N iterations (0 disables)
-    eval_games: int = 20        # games per opponent (split evenly across colors)
+    # eval_every: int = 50        # run a skill eval every N iterations (0 disables)
+    eval_every: int = 10_000
+    eval_games: int = 20  # games per opponent (split evenly across colors)
     eval_opponents: tuple = ("random", "attacker")  # add "trout" if Stockfish present
     metrics_path: str = "checkpoints/metrics.jsonl"
     # --- async actor/learner (deepnash-train-async) ---
     # In async mode, eval_every / checkpoint_every / total_iters count LEARNER
     # STEPS, not outer iterations.
-    async_actors: int = 8           # persistent CPU self-play workers
-    traj_queue_size: int = 256      # actor->learner queue cap (backpressure)
-    min_buffer_to_train: int = 64   # warmup: learner waits for this many trajectories
-    drain_per_cycle: int = 64       # max trajectories pulled from queue per learner cycle
-    weight_broadcast_every: int = 20  # push fresh weights to actors every N learner steps
+    async_actors: int = 4  # persistent CPU self-play workers
+    traj_queue_size: int = 256  # actor->learner queue cap (backpressure)
+    min_buffer_to_train: int = 64  # warmup: learner waits for this many trajectories
+    drain_per_cycle: int = 64  # max trajectories pulled from queue per learner cycle
+    weight_broadcast_every: int = (
+        20  # push fresh weights to actors every N learner steps
+    )
 
 
 @dataclass
