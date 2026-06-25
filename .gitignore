@@ -1,7 +1,11 @@
 .venv/
 __pycache__/
-checkpoints/
+checkpoints/*
 
 # env should be synced over toml file, not lock file
 **/*.lock
+
+# include files
+!checkpoints/deepnash_async_100000.pt
+!checkpoints/deepnash_async_1000000.pt
 
