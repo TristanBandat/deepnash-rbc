@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+checkpoints/
+
+# env should be synced over toml file, not lock file
+**/*.lock
+
