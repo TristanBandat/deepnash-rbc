@@ -45,10 +45,12 @@ PYPROJECT = ROOT / "pyproject.toml"
 CHECKPOINTS = ROOT / "checkpoints"
 
 # --- edit me -----------------------------------------------------------------
-# (bump_level, args) per run. Example: scale the net up across successive versions.
+# (bump_level, args) per run; args pass straight to deepnash-train-async.
+# Example: sweep the observation history length across three versions.
 RUNS: list[tuple[str, list[str]]] = [
-    ("minor", ["--channels", "256", "--blocks", "12"]),
-    ("minor", ["--channels", "384", "--blocks", "16"]),
+    ("minor", ["--history", "4"]),
+    ("minor", ["--history", "8"]),
+    ("minor", ["--history", "16"]),
 ]
 # -----------------------------------------------------------------------------
 
