@@ -48,6 +48,7 @@ from .metrics import MetricsLogger, resume_metrics
 from .network import DeepNashNet
 from .replay import ReplayBuffer
 from .rnad.trainer import RNaDLearner
+from .schedule import wait_until_allowed
 from .selfplay import play_one_game
 from .train import resolve_device
 
@@ -101,7 +102,8 @@ def load_resume(
 
 
 # -- actor process -----------------------------------------------------------
-def actor_loop(actor_id, init_sd, cfg: Config, traj_q, weight_q, stop_event):
+def actor_loop(actor_id, init_sd, cfg: Config, traj_q, weight_q, stop_event,
+               pause_event):
     torch.set_num_threads(1)  # one thread per actor: avoid oversubscription
     device = torch.device("cpu")
     net = DeepNashNet(cfg.encoding, cfg.network)
@@ -109,11 +111,15 @@ def actor_loop(actor_id, init_sd, cfg: Config, traj_q, weight_q, stop_event):
     net.eval()
 
     while not stop_event.is_set():
+        # paused during an idle window: stop self-play so the rig stays quiet
+        if pause_event.is_set():
+            time.sleep(1.0)
+            continue
         latest = _drain_latest(weight_q)
         if latest is not None:
             _load_numpy_sd(net, latest)
         for traj in play_one_game(net, device, cfg):
-            if stop_event.is_set():
+            if stop_event.is_set() or pause_event.is_set():
                 break
             try:
                 traj_q.put(traj, timeout=1.0)
@@ -165,15 +171,47 @@ def run_async(cfg: Config | None = None) -> None:
     traj_q = ctx.Queue(maxsize=cfg.train.traj_queue_size)
     weight_qs = [ctx.Queue(maxsize=1) for _ in range(n_actors)]
     stop_event = ctx.Event()
+    pause_event = ctx.Event()  # set during idle windows to halt self-play
 
     init_sd = _sd_to_numpy(net)
     procs: List[mp.Process] = []
     for i in range(n_actors):
         p = ctx.Process(target=actor_loop,
-                        args=(i, init_sd, cfg, traj_q, weight_qs[i], stop_event),
+                        args=(i, init_sd, cfg, traj_q, weight_qs[i], stop_event,
+                              pause_event),
                         daemon=True)
         p.start()
         procs.append(p)
+
+    def _broadcast():
+        sd = _sd_to_numpy(net)
+        for wq in weight_qs:
+            _drain_latest(wq)
+            try:
+                wq.put_nowait(sd)
+            except queue.Full:
+                pass
+
+    def _save_checkpoint(note: str = ""):
+        path = checkpoint_path(cfg.train.checkpoint_dir, step, prefix="deepnash_async")
+        torch.save({"net": net.state_dict(), "step": step,
+                    "opt": learner.opt.state_dict(),
+                    "reg_net": learner.reg_net.state_dict(),
+                    "iteration": learner.iteration,
+                    "games_seen": games_seen,
+                    "net_cfg": asdict(cfg.network), "enc_cfg": asdict(cfg.encoding)}, path)
+        tqdm.write(f"[async] saved {path}{note}")
+
+    def _on_idle():
+        # pause actors, then checkpoint so a long idle is crash-safe
+        pause_event.set()
+        if step > 0:
+            _save_checkpoint(" (pre-idle)")
+        pbar.set_postfix_str("idle")
+
+    def _on_resume():
+        pause_event.clear()
+        _broadcast()  # actors held stale weights while paused
 
     n_params = sum(p.numel() for p in net.parameters())
     print(f"[async] device={device} actors={n_actors} params={n_params:,}")
@@ -193,6 +231,13 @@ def run_async(cfg: Config | None = None) -> None:
     )
     try:
         while step < cfg.train.total_iters:
+            # 0) idle outside the training window (pause actors, sleep the learner)
+            if wait_until_allowed(
+                cfg, log=tqdm.write, on_idle=_on_idle, on_resume=_on_resume
+            ):
+                warmup_start = time.time()  # reset deadlock timer after a long idle
+                last_log = 0.0
+
             # 1) drain finished trajectories into the buffer
             drained = 0
             while drained < cfg.train.drain_per_cycle:
@@ -225,13 +270,7 @@ def run_async(cfg: Config | None = None) -> None:
 
             # 4) broadcast fresh weights to actors
             if step % cfg.train.weight_broadcast_every == 0:
-                sd = _sd_to_numpy(net)
-                for wq in weight_qs:
-                    _drain_latest(wq)
-                    try:
-                        wq.put_nowait(sd)
-                    except queue.Full:
-                        pass
+                _broadcast()
 
             # 5) skill eval (pauses training briefly; runs on the learner net)
             if cfg.train.eval_every and step > 0 and step % cfg.train.eval_every == 0:
@@ -243,15 +282,7 @@ def run_async(cfg: Config | None = None) -> None:
 
             # 6) checkpoint
             if step > 0 and step % cfg.train.checkpoint_every == 0:
-                path = checkpoint_path(cfg.train.checkpoint_dir, step,
-                                       prefix="deepnash_async")
-                torch.save({"net": net.state_dict(), "step": step,
-                            "opt": learner.opt.state_dict(),
-                            "reg_net": learner.reg_net.state_dict(),
-                            "iteration": learner.iteration,
-                            "games_seen": games_seen,
-                            "net_cfg": asdict(cfg.network), "enc_cfg": asdict(cfg.encoding)}, path)
-                tqdm.write(f"[async] saved {path}")
+                _save_checkpoint()
 
             if time.time() - last_log > 10:
                 tqdm.write(f"[async step {step}] buffer={len(buffer)} "

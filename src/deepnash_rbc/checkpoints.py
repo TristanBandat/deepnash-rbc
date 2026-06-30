@@ -72,6 +72,53 @@ def find_latest_checkpoint(
     return best
 
 
+# -- version sequencing (for chaining runs; see scripts/train_campaign.py) ----
+_VERSION_DIR_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+
+
+def _version_key(version: str) -> tuple[int, int, int]:
+    major, minor, patch = (int(x) for x in version.split("."))
+    return major, minor, patch
+
+
+def existing_versions(checkpoint_dir: str) -> list[str]:
+    """Versions that already have a ``v<version>/`` folder, sorted ascending."""
+    out = []
+    if os.path.isdir(checkpoint_dir):
+        for name in os.listdir(checkpoint_dir):
+            m = _VERSION_DIR_RE.match(name)
+            if m and os.path.isdir(os.path.join(checkpoint_dir, name)):
+                out.append(name[1:])
+    return sorted(out, key=_version_key)
+
+
+def bump_version(version: str, level: str) -> str:
+    """Increment a ``MAJOR.MINOR.PATCH`` version at the given level."""
+    major, minor, patch = _version_key(version)
+    if level == "major":
+        return f"{major + 1}.0.0"
+    if level == "minor":
+        return f"{major}.{minor + 1}.0"
+    if level == "patch":
+        return f"{major}.{minor}.{patch + 1}"
+    raise ValueError(f"unknown bump level {level!r} (use major/minor/patch)")
+
+
+def next_free_version(level: str, taken, base: str) -> str:
+    """Next unused version at ``level``, computed from the LARGEST taken version.
+
+    Always grows past the largest existing version rather than filling gaps: the
+    largest of ``taken`` (or ``base`` if nothing is taken yet) is bumped, and we
+    keep bumping at the same level until the result isn't in ``taken``.
+    """
+    taken = set(taken)
+    start = max(taken, key=_version_key) if taken else base
+    v = bump_version(start, level)
+    while v in taken:
+        v = bump_version(v, level)
+    return v
+
+
 # -- per-version metrics log -------------------------------------------------
 def metrics_path(checkpoint_dir: str, version: Optional[str] = None) -> str:
     """Path to a version's metrics log, e.g. ``checkpoints/v0.2.0/metrics_v0.2.0.jsonl``.

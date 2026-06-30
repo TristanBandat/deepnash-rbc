@@ -33,6 +33,7 @@ from .metrics import MetricsLogger
 from .network import DeepNashNet
 from .replay import ReplayBuffer
 from .rnad.trainer import RNaDLearner
+from .schedule import wait_until_allowed
 from .selfplay import collect, parallel_self_play
 
 
@@ -65,6 +66,16 @@ def main(cfg: Config | None = None) -> None:
 
     print(f"[train] device={device} params={sum(p.numel() for p in net.parameters()):,}")
 
+    def _save_checkpoint(note: str = ""):
+        path = checkpoint_path(cfg.train.checkpoint_dir, it, prefix="deepnash")
+        torch.save({"net": net.state_dict(), "iter": it,
+                    "net_cfg": asdict(cfg.network), "enc_cfg": asdict(cfg.encoding)}, path)
+        tqdm.write(f"[train] saved {path}{note}")
+
+    def _on_idle():
+        if it > 0:  # checkpoint before a long idle so it is crash-safe
+            _save_checkpoint(" (pre-idle)")
+
     # Sticky bottom progress bar; in-loop logging routes through tqdm.write so it
     # scrolls above the bar. Disabled off a TTY or via --no-progress.
     pbar = tqdm(
@@ -73,6 +84,8 @@ def main(cfg: Config | None = None) -> None:
         disable=not (cfg.train.progress and sys.stdout.isatty()),
     )
     for it in pbar:
+        # idle outside the training window (single process: pauses everything)
+        wait_until_allowed(cfg, log=tqdm.write, on_idle=_on_idle)
         t0 = time.time()
         if cfg.train.num_actors > 1:
             trajs = parallel_self_play(net, cfg, cfg.train.games_per_iter)
@@ -106,10 +119,7 @@ def main(cfg: Config | None = None) -> None:
             tqdm.write(f"[eval {it}] {wr}")
 
         if it > 0 and it % cfg.train.checkpoint_every == 0:
-            path = checkpoint_path(cfg.train.checkpoint_dir, it, prefix="deepnash")
-            torch.save({"net": net.state_dict(), "iter": it,
-                        "net_cfg": asdict(cfg.network), "enc_cfg": asdict(cfg.encoding)}, path)
-            tqdm.write(f"[train] saved {path}")
+            _save_checkpoint()
 
 
 if __name__ == "__main__":
