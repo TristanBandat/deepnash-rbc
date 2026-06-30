@@ -112,6 +112,13 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         "checkpoint has them; older checkpoints don't, so those reset with a warning).",
     )
     p.add_argument(
+        "--progress",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Show a tqdm progress bar during training (--no-progress to disable). "
+        "Auto-suppressed when stdout isn't a TTY. Default: config value (on).",
+    )
+    p.add_argument(
         "--fast-learner",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -169,6 +176,8 @@ def config_from_args(argv: list[str] | None = None, prog: str | None = None) -> 
         cfg.train.num_actors = args.num_actors
     if args.resume is not None:
         cfg.train.resume = args.resume
+    if args.progress is not None:
+        cfg.train.progress = args.progress
     if args.fast_learner is not None:
         cfg.rnad.fast_learner = args.fast_learner
     if args.compile_net is not None:
