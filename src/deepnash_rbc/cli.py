@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import os
 
+from .checkpoints import metrics_path
 from .config import Config
 
 _TRUE = {"1", "true", "yes", "on"}
@@ -49,8 +50,9 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         "--checkpoint-dir",
         default=None,
         help="Directory for checkpoints; also redirects metrics to "
-        "<dir>/metrics.jsonl unless --metrics-path is given. Use a distinct "
-        "dir per ablation arm so the runs don't overwrite each other.",
+        "<dir>/v<version>/metrics_v<version>.jsonl unless --metrics-path is "
+        "given. Use a distinct dir per ablation arm so the runs don't overwrite "
+        "each other.",
     )
     p.add_argument(
         "--metrics-path",
@@ -150,7 +152,9 @@ def config_from_args(argv: list[str] | None = None, prog: str | None = None) -> 
 
     if args.checkpoint_dir is not None:
         cfg.train.checkpoint_dir = args.checkpoint_dir
-        cfg.train.metrics_path = os.path.join(args.checkpoint_dir, "metrics.jsonl")
+    # Derive the versioned metrics path from whichever checkpoint_dir is in effect
+    # (default or overridden); --metrics-path takes precedence over the default.
+    cfg.train.metrics_path = metrics_path(cfg.train.checkpoint_dir)
     if args.metrics_path is not None:
         cfg.train.metrics_path = args.metrics_path
     if args.device is not None:
