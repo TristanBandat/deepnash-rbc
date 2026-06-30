@@ -10,15 +10,16 @@ Baselines:
   random   -- RandomBot: random legal sense + move. The floor; should be crushed
               quickly once anything is learned.
   attacker -- AttackerBot: makes a beeline for the king. Weak but not trivial.
-  trout    -- TroutBot: Stockfish-backed. Only used if a Stockfish binary is
-              available (STOCKFISH_EXECUTABLE env var or `stockfish` on PATH).
+  trout    -- TroutBot: Stockfish-backed. Used whenever a Stockfish binary can be
+              resolved -- STOCKFISH_EXECUTABLE, `stockfish` on PATH, or the copy
+              bundled in tools/stockfish/ -- which is then exported as
+              STOCKFISH_EXECUTABLE so reconchess's TroutBot picks it up.
               This is the meaningful "is it actually playing chess" bar.
 """
 
 from __future__ import annotations
 
 import os
-import shutil
 from typing import Dict, List
 
 import chess
@@ -32,8 +33,16 @@ from .config import Config
 from .network import DeepNashNet
 
 
-def _stockfish_available() -> bool:
-    return bool(os.environ.get("STOCKFISH_EXECUTABLE")) or shutil.which("stockfish") is not None
+def _ensure_stockfish() -> str | None:
+    """Resolve a Stockfish binary (env var, PATH, or the bundled tools/stockfish/)
+    and export STOCKFISH_EXECUTABLE so reconchess's TroutBot finds it. Returns the
+    path, or None if no engine is available. A user-set env var is left untouched."""
+    from .analysis.engine import STOCKFISH_ENV_VAR, resolve_engine_path
+
+    path = resolve_engine_path()
+    if path:
+        os.environ.setdefault(STOCKFISH_ENV_VAR, path)
+    return path
 
 
 def _make_opponent(name: str):
@@ -56,8 +65,8 @@ def evaluate(
 ) -> Dict[str, float]:
     net.eval()
     opponents = list(opponents or cfg.train.eval_opponents)
-    if "trout" in opponents and not _stockfish_available():
-        opponents = [o for o in opponents if o != "trout"]  # silently skip if no engine
+    if "trout" in opponents and not _ensure_stockfish():
+        opponents = [o for o in opponents if o != "trout"]  # skip only if no engine
     n = games_per_opponent or cfg.train.eval_games
     history = cfg.encoding.history
 
