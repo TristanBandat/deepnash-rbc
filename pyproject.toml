@@ -1,23 +1,23 @@
 [project]
 name = "deepnash-rbc"
-version = "0.2.0"
+version = "0.4.0"
 description = "A model-free R-NaD (DeepNash-style) self-play agent for Reconnaissance Blind Chess (RBC)."
 readme = "README.md"
-requires-python = ">=3.11"
-dependencies = [
-    "reconchess>=1.6.9",
-    "torch>=2.2",
-    "numpy>=1.24",
-]
+requires-python = ">=3.11,<3.14"
+dependencies = ["reconchess>=1.6.9", "torch>=2.2", "numpy>=1.24", "tqdm>=4.66"]
 
 [project.optional-dependencies]
-ui = [
-  "flask>=3.0"
-]
+ui = ["flask>=3.0"]
 
 [dependency-groups]
-dev = [
-  "pytest>=8.0"
+dev = ["pytest>=8.0"]
+# Interactive metrics exploration (notebooks/). Kept out of the runtime deps so
+# training installs stay lean: run with `uv run --group notebooks marimo edit ...`.
+notebooks = [
+  "marimo>=0.9",
+  "pandas>=2.0",
+  "matplotlib>=3.7",
+  "tensorboard>=2.14",
 ]
 
 [project.scripts]
@@ -37,4 +37,3 @@ packages = ["src/deepnash_rbc"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/deepnash_rbc/play.html" = "deepnash_rbc/play.html"
-

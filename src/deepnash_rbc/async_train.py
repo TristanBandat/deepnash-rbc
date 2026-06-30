@@ -22,25 +22,33 @@ Run:  uv run deepnash-train-async   (or: python -m deepnash_rbc.async_train)
 
 from __future__ import annotations
 
-import glob
 import os
 import queue
-import re
+import sys
 import time
 from dataclasses import asdict
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import numpy as np
 import torch
 import torch.multiprocessing as mp
+from tqdm import tqdm
 
+from .checkpoints import (
+    checkpoint_path,
+    ensure_version_config,
+    find_latest_checkpoint,
+    metrics_path,
+    version_dir,
+)
 from .cli import config_from_args
 from .config import Config
 from .eval import evaluate
-from .metrics import MetricsLogger
+from .metrics import MetricsLogger, resume_metrics
 from .network import DeepNashNet
 from .replay import ReplayBuffer
 from .rnad.trainer import RNaDLearner
+from .schedule import wait_until_allowed
 from .selfplay import play_one_game
 from .train import resolve_device
 
@@ -66,20 +74,12 @@ def _drain_latest(q: "mp.Queue"):
 
 
 # -- checkpoint resume -------------------------------------------------------
-def find_latest_checkpoint(checkpoint_dir: str) -> Optional[str]:
-    """Latest deepnash_async_<step>.pt in the dir, by step number (not mtime)."""
-    paths = glob.glob(os.path.join(checkpoint_dir, "deepnash_async_*.pt"))
-    best, best_step = None, -1
-    for p in paths:
-        m = re.search(r"deepnash_async_(\d+)\.pt$", os.path.basename(p))
-        if m and int(m.group(1)) > best_step:
-            best, best_step = p, int(m.group(1))
-    return best
-
-
-def load_resume(path: str, learner: RNaDLearner, device: torch.device) -> int:
+def load_resume(
+    path: str, learner: RNaDLearner, device: torch.device
+) -> tuple[int, int]:
     """Restore a learner from a checkpoint, tolerating older (net+step only)
-    formats. Returns the learner step to resume from."""
+    formats. Returns ``(step, games_seen)`` to resume the loop counters from
+    (games_seen is 0 for older checkpoints that didn't record it)."""
     ck = torch.load(path, map_location=device)
     learner.net.load_state_dict(ck["net"])
     step = int(ck.get("step", ck.get("iter", 0)))
@@ -98,11 +98,12 @@ def load_resume(path: str, learner: RNaDLearner, device: torch.device) -> int:
     learner.iteration = int(
         ck.get("iteration", step // max(1, learner.cfg.rnad.iteration_steps))
     )
-    return step
+    return step, int(ck.get("games_seen", 0))
 
 
 # -- actor process -----------------------------------------------------------
-def actor_loop(actor_id, init_sd, cfg: Config, traj_q, weight_q, stop_event):
+def actor_loop(actor_id, init_sd, cfg: Config, traj_q, weight_q, stop_event,
+               pause_event):
     torch.set_num_threads(1)  # one thread per actor: avoid oversubscription
     device = torch.device("cpu")
     net = DeepNashNet(cfg.encoding, cfg.network)
@@ -110,11 +111,15 @@ def actor_loop(actor_id, init_sd, cfg: Config, traj_q, weight_q, stop_event):
     net.eval()
 
     while not stop_event.is_set():
+        # paused during an idle window: stop self-play so the rig stays quiet
+        if pause_event.is_set():
+            time.sleep(1.0)
+            continue
         latest = _drain_latest(weight_q)
         if latest is not None:
             _load_numpy_sd(net, latest)
         for traj in play_one_game(net, device, cfg):
-            if stop_event.is_set():
+            if stop_event.is_set() or pause_event.is_set():
                 break
             try:
                 traj_q.put(traj, timeout=1.0)
@@ -132,35 +137,81 @@ def run_async(cfg: Config | None = None) -> None:
     net = DeepNashNet(cfg.encoding, cfg.network).to(device)
     learner = RNaDLearner(cfg, net, device)
     buffer = ReplayBuffer(cfg.train.buffer_capacity)
-    metrics = MetricsLogger(cfg.train.metrics_path)
-    os.makedirs(cfg.train.checkpoint_dir, exist_ok=True)
+    os.makedirs(version_dir(cfg.train.checkpoint_dir), exist_ok=True)
+    cfg_path = ensure_version_config(cfg.train.checkpoint_dir, cfg)
+    print(f"[async] version config: {cfg_path}")
+
+    metrics_file = cfg.train.metrics_path or metrics_path(cfg.train.checkpoint_dir)
 
     # resume before snapshotting init weights so actors start from the resumed net
     start_step = 0
+    start_games_seen = 0
+    resume_wall = 0.0
     if cfg.train.resume:
         path = cfg.train.resume
         if path == "auto":
             path = find_latest_checkpoint(cfg.train.checkpoint_dir)
             if path is None:
                 raise RuntimeError(
-                    f"--resume: no deepnash_async_*.pt found in {cfg.train.checkpoint_dir}"
+                    "--resume: no deepnash_async_v*_*.pt found in "
+                    f"{cfg.train.checkpoint_dir} for the current version"
                 )
-        start_step = load_resume(path, learner, device)
-        print(f"[async] resumed from {path} at step {start_step}")
+        start_step, start_games_seen = load_resume(path, learner, device)
+        # Continue the metrics log from this checkpoint: read its wall_s and drop
+        # any entries logged after it (the previous run may have run on past it).
+        resume_wall = resume_metrics(metrics_file, start_step)
+        print(
+            f"[async] resumed from {path} at step {start_step} "
+            f"(wall_s={resume_wall:.1f})"
+        )
+
+    metrics = MetricsLogger(metrics_file, resume_wall_s=resume_wall)
 
     n_actors = max(1, cfg.train.async_actors)
     traj_q = ctx.Queue(maxsize=cfg.train.traj_queue_size)
     weight_qs = [ctx.Queue(maxsize=1) for _ in range(n_actors)]
     stop_event = ctx.Event()
+    pause_event = ctx.Event()  # set during idle windows to halt self-play
 
     init_sd = _sd_to_numpy(net)
     procs: List[mp.Process] = []
     for i in range(n_actors):
         p = ctx.Process(target=actor_loop,
-                        args=(i, init_sd, cfg, traj_q, weight_qs[i], stop_event),
+                        args=(i, init_sd, cfg, traj_q, weight_qs[i], stop_event,
+                              pause_event),
                         daemon=True)
         p.start()
         procs.append(p)
+
+    def _broadcast():
+        sd = _sd_to_numpy(net)
+        for wq in weight_qs:
+            _drain_latest(wq)
+            try:
+                wq.put_nowait(sd)
+            except queue.Full:
+                pass
+
+    def _save_checkpoint(note: str = ""):
+        path = checkpoint_path(cfg.train.checkpoint_dir, step, prefix="deepnash_async")
+        torch.save({"net": net.state_dict(), "step": step,
+                    "opt": learner.opt.state_dict(),
+                    "reg_net": learner.reg_net.state_dict(),
+                    "iteration": learner.iteration,
+                    "games_seen": games_seen,
+                    "net_cfg": asdict(cfg.network), "enc_cfg": asdict(cfg.encoding)}, path)
+        tqdm.write(f"[async] saved {path}{note}")
+
+    def _on_idle():
+        # pause actors, then checkpoint so a long idle is crash-safe
+        pause_event.set()
+        if step > 0:
+            _save_checkpoint(" (pre-idle)")
+        pbar.set_postfix_str("idle")
+
+    def _on_resume():
+        pause_event.clear()
+        _broadcast()  # actors held stale weights while paused
 
     n_params = sum(p.numel() for p in net.parameters())
     print(f"[async] device={device} actors={n_actors} params={n_params:,}")
@@ -168,10 +219,25 @@ def run_async(cfg: Config | None = None) -> None:
     step = start_step
     last: Dict = {}
     last_log = 0.0
-    games_seen = 0
+    games_seen = start_games_seen  # cumulative across resumes (see checkpoint save)
     warmup_start = time.time()
+    # Sticky bottom progress bar; all in-loop logging goes through tqdm.write so it
+    # scrolls above the bar instead of mangling it. Disabled off a TTY (redirected
+    # logs) or via --no-progress.
+    pbar = tqdm(
+        total=cfg.train.total_iters, initial=start_step, unit="step", desc="train",
+        dynamic_ncols=True, smoothing=0.05,
+        disable=not (cfg.train.progress and sys.stdout.isatty()),
+    )
     try:
         while step < cfg.train.total_iters:
+            # 0) idle outside the training window (pause actors, sleep the learner)
+            if wait_until_allowed(
+                cfg, log=tqdm.write, on_idle=_on_idle, on_resume=_on_resume
+            ):
+                warmup_start = time.time()  # reset deadlock timer after a long idle
+                last_log = 0.0
+
             # 1) drain finished trajectories into the buffer
             drained = 0
             while drained < cfg.train.drain_per_cycle:
@@ -200,16 +266,11 @@ def run_async(cfg: Config | None = None) -> None:
                 step = last["steps"]
                 metrics.log({"step": step, "type": "train", "drained": drained,
                              "games_seen": games_seen, "buffer": len(buffer), **last})
+                pbar.update(step - pbar.n)  # advance bar to the current step
 
             # 4) broadcast fresh weights to actors
             if step % cfg.train.weight_broadcast_every == 0:
-                sd = _sd_to_numpy(net)
-                for wq in weight_qs:
-                    _drain_latest(wq)
-                    try:
-                        wq.put_nowait(sd)
-                    except queue.Full:
-                        pass
+                _broadcast()
 
             # 5) skill eval (pauses training briefly; runs on the learner net)
             if cfg.train.eval_every and step > 0 and step % cfg.train.eval_every == 0:
@@ -217,23 +278,20 @@ def run_async(cfg: Config | None = None) -> None:
                 metrics.log({"step": step, "type": "skill", **skill})
                 wr = " ".join(f"{k}={v}" for k, v in skill.items()
                               if k.startswith("vs_") and not k.endswith(("_draw", "_plies", "_n")))
-                print(f"[eval step {step}] {wr}")
+                tqdm.write(f"[eval step {step}] {wr}")
 
             # 6) checkpoint
             if step > 0 and step % cfg.train.checkpoint_every == 0:
-                path = os.path.join(cfg.train.checkpoint_dir, f"deepnash_async_{step}.pt")
-                torch.save({"net": net.state_dict(), "step": step,
-                            "opt": learner.opt.state_dict(),
-                            "reg_net": learner.reg_net.state_dict(),
-                            "iteration": learner.iteration,
-                            "net_cfg": asdict(cfg.network), "enc_cfg": asdict(cfg.encoding)}, path)
-                print(f"[async] saved {path}")
+                _save_checkpoint()
 
             if time.time() - last_log > 10:
-                print(f"[async step {step}] buffer={len(buffer)} "
-                      f"qsize~{_qsize(traj_q)} games_seen={games_seen} {last}")
+                tqdm.write(f"[async step {step}] buffer={len(buffer)} "
+                           f"qsize~{_qsize(traj_q)} games_seen={games_seen} {last}")
+                pbar.set_postfix(buf=len(buffer), q=_qsize(traj_q),
+                                 games=games_seen, loss=round(last.get("loss", 0.0), 3))
                 last_log = time.time()
     finally:
+        pbar.close()
         stop_event.set()
         # terminate actors directly (they may be mid-game and not checking the
         # event); they are stateless self-play workers so this is safe.
