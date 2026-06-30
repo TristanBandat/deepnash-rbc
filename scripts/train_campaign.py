@@ -32,6 +32,7 @@ Note: this rewrites the ``version`` field in pyproject.toml as it goes.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -43,6 +44,11 @@ from deepnash_rbc.version import get_version
 ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 CHECKPOINTS = ROOT / "checkpoints"
+
+# Set True to run the whole campaign back-to-back ignoring the nightly idle
+# window (exports DEEPNASH_IGNORE_IDLE=1 to every run). Leave False to honour the
+# schedule in config.
+IGNORE_IDLE = True
 
 # --- edit me -----------------------------------------------------------------
 # (bump_level, args) per run; args pass straight to deepnash-train-async.
@@ -90,11 +96,14 @@ def main() -> None:
     if args.dry_run:
         return
 
+    env = os.environ.copy()
+    if IGNORE_IDLE:
+        env["DEEPNASH_IGNORE_IDLE"] = "1"
     for i, (version, run_args) in enumerate(plan, 1):
         write_version(version)  # what get_version() reads in the subprocess
         cmd = ["uv", "run", "deepnash-train-async", *run_args]
         print(f"\n[campaign] === run {i}/{len(plan)}  v{version} ===\n[campaign] $ {' '.join(cmd)}")
-        result = subprocess.run(cmd, cwd=ROOT)
+        result = subprocess.run(cmd, cwd=ROOT, env=env)
         if result.returncode != 0:
             print(f"[campaign] run {i} (v{version}) exited {result.returncode}; stopping.")
             sys.exit(result.returncode)
