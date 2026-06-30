@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from dataclasses import fields, is_dataclass
 
 from .checkpoints import metrics_path
 from .config import Config
@@ -24,16 +25,70 @@ _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
 
 
-def _env_bool(name: str) -> bool | None:
-    val = os.environ.get(name)
-    if val is None:
-        return None
-    v = val.strip().lower()
+def _parse_bool(value: str) -> bool:
+    v = value.strip().lower()
     if v in _TRUE:
         return True
     if v in _FALSE:
         return False
-    raise ValueError(f"{name}={val!r} is not a boolean (use one of {_TRUE | _FALSE})")
+    raise ValueError(f"{value!r} is not a boolean (use one of {_TRUE | _FALSE})")
+
+
+def _env_bool(name: str) -> bool | None:
+    val = os.environ.get(name)
+    if val is None:
+        return None
+    return _parse_bool(val)
+
+
+def _coerce_scalar(text: str):
+    """Best-effort scalar parse for tuple elements: int, else float, else str."""
+    text = text.strip()
+    for cast in (int, float):
+        try:
+            return cast(text)
+        except ValueError:
+            pass
+    return text
+
+
+def _coerce(value: str, annotation, current) -> object:
+    """Coerce a --set string to a config field's type, using its annotation
+    (a string under ``from __future__ import annotations``) and current value."""
+    ann = str(annotation or type(current).__name__).lower()
+    v = value.strip()
+    if "none" in ann and v.lower() in {"none", "null"}:
+        return None
+    if "bool" in ann:
+        return _parse_bool(v)
+    if "tuple" in ann or "list" in ann:
+        return tuple(_coerce_scalar(x) for x in v.split(",")) if v else ()
+    if "int" in ann:
+        return int(v)
+    if "float" in ann:
+        return float(v)
+    return v  # str, str | None with a value, or unknown
+
+
+def _apply_overrides(cfg: Config, assignments: list[str]) -> None:
+    """Apply ``--set section.field=value`` overrides onto nested config dataclasses."""
+    for item in assignments:
+        if "=" not in item:
+            raise ValueError(f"--set expects PATH=VALUE, got {item!r}")
+        path, value = item.split("=", 1)
+        parts = path.strip().split(".")
+        obj = cfg
+        for seg in parts[:-1]:
+            if not is_dataclass(obj) or not hasattr(obj, seg):
+                raise ValueError(f"--set: no config section {seg!r} in {path!r}")
+            obj = getattr(obj, seg)
+        field = parts[-1]
+        names = {f.name: f for f in fields(obj)} if is_dataclass(obj) else {}
+        if field not in names:
+            raise ValueError(f"--set: unknown config field {path!r}")
+        if is_dataclass(getattr(obj, field)):
+            raise ValueError(f"--set: {path!r} is a section, not a leaf field")
+        setattr(obj, field, _coerce(value, names[field].type, getattr(obj, field)))
 
 
 def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
@@ -74,6 +129,26 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         default=None,
         help="ResNet torso depth (NetworkConfig.blocks). See --channels. Default: "
         "config value.",
+    )
+    p.add_argument(
+        "--history",
+        type=int,
+        default=None,
+        help="Past observation frames stacked into the input (EncodingConfig.history); "
+        "sets the network's input channels. Like --channels/--blocks this is "
+        "shape-locked to existing checkpoints, so bump the version in pyproject.toml "
+        "for each distinct value. Default: config value.",
+    )
+    p.add_argument(
+        "--set",
+        dest="overrides",
+        action="append",
+        default=None,
+        metavar="PATH=VALUE",
+        help="Override any config field by dotted path, e.g. --set encoding.history=4 "
+        "--set rnad.eta=0.3 --set train.train_days=0,1,2. Repeatable; applied AFTER "
+        "the named flags so it wins. The value is coerced to the field's type "
+        "(int/float/bool/str/tuple; 'none' clears an optional field).",
     )
     p.add_argument("--device", default=None, help="cuda or cpu (default: config value).")
     p.add_argument("--seed", type=int, default=None, help="Override the training seed.")
@@ -156,6 +231,8 @@ def config_from_args(argv: list[str] | None = None, prog: str | None = None) -> 
         cfg.network.channels = args.channels
     if args.blocks is not None:
         cfg.network.blocks = args.blocks
+    if args.history is not None:
+        cfg.encoding.history = args.history
 
     if args.checkpoint_dir is not None:
         cfg.train.checkpoint_dir = args.checkpoint_dir
@@ -184,5 +261,9 @@ def config_from_args(argv: list[str] | None = None, prog: str | None = None) -> 
         cfg.rnad.compile_net = args.compile_net
     if args.amp is not None:
         cfg.rnad.amp = args.amp
+
+    # Generic overrides last so they win over the named flags above.
+    if args.overrides:
+        _apply_overrides(cfg, args.overrides)
 
     return cfg
