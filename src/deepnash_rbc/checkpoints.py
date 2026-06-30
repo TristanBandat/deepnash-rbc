@@ -72,6 +72,21 @@ def find_latest_checkpoint(
     return best
 
 
+# -- per-version metrics log -------------------------------------------------
+def metrics_path(checkpoint_dir: str, version: Optional[str] = None) -> str:
+    """Path to a version's metrics log, e.g. ``checkpoints/v0.2.0/metrics_v0.2.0.jsonl``.
+
+    Metrics live alongside the version's checkpoints (rather than in a single
+    flat file) so a version's training telemetry is grouped with the models it
+    describes, and the filename carries the version for the same reason the
+    checkpoints do.
+    """
+    version = version or get_version()
+    return os.path.join(
+        version_dir(checkpoint_dir, version), f"metrics_v{version}.jsonl"
+    )
+
+
 # -- per-version config manifest ---------------------------------------------
 def version_config_path(checkpoint_dir: str, version: Optional[str] = None) -> str:
     """Path to a version's config manifest, e.g. ``checkpoints/v0.2.0/config.json``."""

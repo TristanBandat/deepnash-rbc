@@ -36,12 +36,13 @@ from .checkpoints import (
     checkpoint_path,
     ensure_version_config,
     find_latest_checkpoint,
+    metrics_path,
     version_dir,
 )
 from .cli import config_from_args
 from .config import Config
 from .eval import evaluate
-from .metrics import MetricsLogger
+from .metrics import MetricsLogger, resume_metrics
 from .network import DeepNashNet
 from .replay import ReplayBuffer
 from .rnad.trainer import RNaDLearner
@@ -125,13 +126,15 @@ def run_async(cfg: Config | None = None) -> None:
     net = DeepNashNet(cfg.encoding, cfg.network).to(device)
     learner = RNaDLearner(cfg, net, device)
     buffer = ReplayBuffer(cfg.train.buffer_capacity)
-    metrics = MetricsLogger(cfg.train.metrics_path)
     os.makedirs(version_dir(cfg.train.checkpoint_dir), exist_ok=True)
     cfg_path = ensure_version_config(cfg.train.checkpoint_dir, cfg)
     print(f"[async] version config: {cfg_path}")
 
+    metrics_file = cfg.train.metrics_path or metrics_path(cfg.train.checkpoint_dir)
+
     # resume before snapshotting init weights so actors start from the resumed net
     start_step = 0
+    resume_wall = 0.0
     if cfg.train.resume:
         path = cfg.train.resume
         if path == "auto":
@@ -142,7 +145,15 @@ def run_async(cfg: Config | None = None) -> None:
                     f"{cfg.train.checkpoint_dir} for the current version"
                 )
         start_step = load_resume(path, learner, device)
-        print(f"[async] resumed from {path} at step {start_step}")
+        # Continue the metrics log from this checkpoint: read its wall_s and drop
+        # any entries logged after it (the previous run may have run on past it).
+        resume_wall = resume_metrics(metrics_file, start_step)
+        print(
+            f"[async] resumed from {path} at step {start_step} "
+            f"(wall_s={resume_wall:.1f})"
+        )
+
+    metrics = MetricsLogger(metrics_file, resume_wall_s=resume_wall)
 
     n_actors = max(1, cfg.train.async_actors)
     traj_q = ctx.Queue(maxsize=cfg.train.traj_queue_size)

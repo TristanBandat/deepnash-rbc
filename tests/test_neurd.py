@@ -9,10 +9,9 @@ Covers the three things that make the full_action_neurd ablation trustworthy:
 
 from __future__ import annotations
 
-import os
-
 import torch
 
+from deepnash_rbc.checkpoints import metrics_path
 from deepnash_rbc.cli import config_from_args
 from deepnash_rbc.config import (
     Config,
@@ -108,7 +107,7 @@ def test_cli_selects_flag_and_redirects_dirs():
     )
     assert cfg.rnad.full_action_neurd is False
     assert cfg.train.checkpoint_dir == "runs/single"
-    assert cfg.train.metrics_path == os.path.join("runs/single", "metrics.jsonl")
+    assert cfg.train.metrics_path == metrics_path("runs/single")
 
     cfg2 = config_from_args(["--full-action-neurd"])
     assert cfg2.rnad.full_action_neurd is True

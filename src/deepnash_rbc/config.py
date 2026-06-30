@@ -89,8 +89,14 @@ class TrainConfig:
     # eval_every: int = 50        # run a skill eval every N iterations (0 disables)
     eval_every: int = 10_000
     eval_games: int = 20  # games per opponent (split evenly across colors)
-    eval_opponents: tuple = ("random", "attacker")  # add "trout" if Stockfish present
-    metrics_path: str = "checkpoints/metrics.jsonl"
+    eval_opponents: tuple = (
+        "random",
+        "attacker",
+        "trout",
+    )  # add "trout" if Stockfish present
+    # None -> derived at runtime as <checkpoint_dir>/v<version>/metrics_v<version>.jsonl
+    # (see checkpoints.metrics_path). Set explicitly via --metrics-path to override.
+    metrics_path: str | None = None
     # --- async actor/learner (deepnash-train-async) ---
     # In async mode, eval_every / checkpoint_every / total_iters count LEARNER
     # STEPS, not outer iterations.
