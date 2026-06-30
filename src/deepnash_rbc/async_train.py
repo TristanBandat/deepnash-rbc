@@ -71,9 +71,12 @@ def _drain_latest(q: "mp.Queue"):
 
 
 # -- checkpoint resume -------------------------------------------------------
-def load_resume(path: str, learner: RNaDLearner, device: torch.device) -> int:
+def load_resume(
+    path: str, learner: RNaDLearner, device: torch.device
+) -> tuple[int, int]:
     """Restore a learner from a checkpoint, tolerating older (net+step only)
-    formats. Returns the learner step to resume from."""
+    formats. Returns ``(step, games_seen)`` to resume the loop counters from
+    (games_seen is 0 for older checkpoints that didn't record it)."""
     ck = torch.load(path, map_location=device)
     learner.net.load_state_dict(ck["net"])
     step = int(ck.get("step", ck.get("iter", 0)))
@@ -92,7 +95,7 @@ def load_resume(path: str, learner: RNaDLearner, device: torch.device) -> int:
     learner.iteration = int(
         ck.get("iteration", step // max(1, learner.cfg.rnad.iteration_steps))
     )
-    return step
+    return step, int(ck.get("games_seen", 0))
 
 
 # -- actor process -----------------------------------------------------------
@@ -134,6 +137,7 @@ def run_async(cfg: Config | None = None) -> None:
 
     # resume before snapshotting init weights so actors start from the resumed net
     start_step = 0
+    start_games_seen = 0
     resume_wall = 0.0
     if cfg.train.resume:
         path = cfg.train.resume
@@ -144,7 +148,7 @@ def run_async(cfg: Config | None = None) -> None:
                     "--resume: no deepnash_async_v*_*.pt found in "
                     f"{cfg.train.checkpoint_dir} for the current version"
                 )
-        start_step = load_resume(path, learner, device)
+        start_step, start_games_seen = load_resume(path, learner, device)
         # Continue the metrics log from this checkpoint: read its wall_s and drop
         # any entries logged after it (the previous run may have run on past it).
         resume_wall = resume_metrics(metrics_file, start_step)
@@ -175,7 +179,7 @@ def run_async(cfg: Config | None = None) -> None:
     step = start_step
     last: Dict = {}
     last_log = 0.0
-    games_seen = 0
+    games_seen = start_games_seen  # cumulative across resumes (see checkpoint save)
     warmup_start = time.time()
     try:
         while step < cfg.train.total_iters:
@@ -234,6 +238,7 @@ def run_async(cfg: Config | None = None) -> None:
                             "opt": learner.opt.state_dict(),
                             "reg_net": learner.reg_net.state_dict(),
                             "iteration": learner.iteration,
+                            "games_seen": games_seen,
                             "net_cfg": asdict(cfg.network), "enc_cfg": asdict(cfg.encoding)}, path)
                 print(f"[async] saved {path}")
 

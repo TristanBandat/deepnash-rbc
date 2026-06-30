@@ -19,6 +19,14 @@ ui = [
 dev = [
   "pytest>=8.0"
 ]
+# Interactive metrics exploration (notebooks/). Kept out of the runtime deps so
+# training installs stay lean: run with `uv run --group notebooks marimo edit ...`.
+notebooks = [
+  "marimo>=0.9",
+  "pandas>=2.0",
+  "matplotlib>=3.7",
+  "tensorboard>=2.14",
+]
 
 [project.scripts]
 deepnash-train = "deepnash_rbc.train:main"
