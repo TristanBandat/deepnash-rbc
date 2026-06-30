@@ -54,7 +54,9 @@ class RNaDConfig:
     full_action_neurd: bool = True
     # --- optimization ---
     lr: float = 5e-5
-    grad_clip: float = 10.0
+    # Tight global-norm clip: NeuRD gradients are noisy and the occasional large
+    # update spikes the loss curves; 1.0 tames that (was 10.0, which barely bit).
+    grad_clip: float = 1.0
     # --- learner performance (model-neutral unless noted) ---
     # fast_learner: vectorized learner step (batched v-trace, scatter-built legal
     # masks, fused scalar readback). Bit-identical math to the legacy path -- it
@@ -74,12 +76,16 @@ class TrainConfig:
     )
     learner_steps_per_iter: int = 4
     total_iters: int = 1_000_000
-    batch_trajectories: int = 16  # trajectories sampled from buffer per learner step
+    # Trajectories sampled from buffer per learner step. Gradient-estimate
+    # variance ~ 1/batch, so 64 (was 16) roughly halves the per-step noise that
+    # made the v0.3.0 curves jagged, and lowers replay reuse. Bump to 128 if the
+    # GPU has headroom; costs steps/s.
+    batch_trajectories: int = 64
     buffer_capacity: int = 4096
     num_actors: int = 1  # >1 uses torch.multiprocessing (see selfplay.py)
     device: str = "cuda"  # falls back to cpu automatically if unavailable
     seconds_per_player: float = 900.0
-    checkpoint_every: int = 1000
+    checkpoint_every: int = 10_000
     checkpoint_dir: str = "checkpoints"
     seed: int = 0
     # resume: None = fresh start; "auto" = latest checkpoint in checkpoint_dir;
@@ -87,10 +93,32 @@ class TrainConfig:
     resume: str | None = None
     # --- evaluation / skill metrics ---
     # eval_every: int = 50        # run a skill eval every N iterations (0 disables)
-    eval_every: int = 10_000
+    eval_every: int = 100_000
     eval_games: int = 20  # games per opponent (split evenly across colors)
-    eval_opponents: tuple = ("random", "attacker")  # add "trout" if Stockfish present
-    metrics_path: str = "checkpoints/metrics.jsonl"
+    eval_opponents: tuple = (
+        "random",
+        "attacker",
+        "trout",
+    )  # add "trout" if Stockfish present
+    # None -> derived at runtime as <checkpoint_dir>/v<version>/metrics_v<version>.jsonl
+    # (see checkpoints.metrics_path). Set explicitly via --metrics-path to override.
+    metrics_path: str | None = None
+    # Show a tqdm progress bar over total_iters during training (auto-suppressed
+    # when stdout isn't a TTY so it doesn't spam redirected logs). --no-progress
+    # turns it off entirely.
+    progress: bool = True
+    # --- nightly idle schedule (sound / electricity) ---
+    # When idle_schedule is True, training only runs inside the recurring window
+    # [train_start_hour, train_stop_hour) on the listed weekdays (local time);
+    # outside it the learner sleeps and the async actors are paused so the rig is
+    # quiet and draws little power. The window may wrap midnight (start > stop):
+    # the default 19:00->06:00 on Mon-Fri means "train on weekday nights" (Friday
+    # night runs into Saturday 06:00, then the weekend idles). Hour granularity.
+    # Override for a one-off run without editing this file: DEEPNASH_IGNORE_IDLE=1.
+    idle_schedule: bool = True
+    train_start_hour: int = 19  # window opens (training resumes) at 19:00
+    train_stop_hour: int = 6  # window closes (training pauses) at 06:00
+    train_days: tuple = (0, 1, 2, 3, 4)  # nights starting Mon-Fri (Mon=0 .. Sun=6)
     # --- async actor/learner (deepnash-train-async) ---
     # In async mode, eval_every / checkpoint_every / total_iters count LEARNER
     # STEPS, not outer iterations.
