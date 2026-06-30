@@ -2,6 +2,9 @@
 __pycache__/
 checkpoints/*
 
+# TensorBoard runs (regenerate from metrics JSONL via notebooks/metrics_to_tensorboard.py)
+runs/
+
 # env should be synced over toml file, not lock file
 **/*.lock
 
