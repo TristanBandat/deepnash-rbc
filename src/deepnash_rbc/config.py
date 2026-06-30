@@ -63,8 +63,8 @@ class RNaDConfig:
     fast_learner: bool = True
     # compile_net / amp DO touch numerics (kernel fusion / bf16), so they are
     # opt-in and excluded from the bit-identical guarantee -- A/B them on the GPU.
-    compile_net: bool = False  # torch.compile the forward (eager state_dict kept)
-    amp: bool = False  # bf16 autocast on the forward (L40S-friendly)
+    compile_net: bool = True  # torch.compile the forward (eager state_dict kept)
+    amp: bool = True  # bf16 autocast on the forward (L40S-friendly)
 
 
 @dataclass
