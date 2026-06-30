@@ -1,14 +1,12 @@
 .venv/
 __pycache__/
-checkpoints/*
+.claude/
 
 # TensorBoard runs (regenerate from metrics JSONL via notebooks/metrics_to_tensorboard.py)
 runs/
 
 # env should be synced over toml file, not lock file
 **/*.lock
-
-# include files
-!checkpoints/deepnash_async_100000.pt
-!checkpoints/deepnash_async_1000000.pt
+**/*.jsonl
+**/*.pt
 
