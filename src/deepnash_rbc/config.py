@@ -97,6 +97,10 @@ class TrainConfig:
     # None -> derived at runtime as <checkpoint_dir>/v<version>/metrics_v<version>.jsonl
     # (see checkpoints.metrics_path). Set explicitly via --metrics-path to override.
     metrics_path: str | None = None
+    # Show a tqdm progress bar over total_iters during training (auto-suppressed
+    # when stdout isn't a TTY so it doesn't spam redirected logs). --no-progress
+    # turns it off entirely.
+    progress: bool = True
     # --- async actor/learner (deepnash-train-async) ---
     # In async mode, eval_every / checkpoint_every / total_iters count LEARNER
     # STEPS, not outer iterations.

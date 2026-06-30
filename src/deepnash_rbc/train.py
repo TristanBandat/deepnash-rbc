@@ -13,10 +13,12 @@ Run:  uv run deepnash-train      (or: python -m deepnash_rbc.train)
 from __future__ import annotations
 
 import os
+import sys
 import time
 from dataclasses import asdict
 
 import torch
+from tqdm import tqdm
 
 from .checkpoints import (
     checkpoint_path,
@@ -63,7 +65,14 @@ def main(cfg: Config | None = None) -> None:
 
     print(f"[train] device={device} params={sum(p.numel() for p in net.parameters()):,}")
 
-    for it in range(cfg.train.total_iters):
+    # Sticky bottom progress bar; in-loop logging routes through tqdm.write so it
+    # scrolls above the bar. Disabled off a TTY or via --no-progress.
+    pbar = tqdm(
+        range(cfg.train.total_iters), unit="iter", desc="train",
+        dynamic_ncols=True, smoothing=0.05,
+        disable=not (cfg.train.progress and sys.stdout.isatty()),
+    )
+    for it in pbar:
         t0 = time.time()
         if cfg.train.num_actors > 1:
             trajs = parallel_self_play(net, cfg, cfg.train.games_per_iter)
@@ -83,7 +92,9 @@ def main(cfg: Config | None = None) -> None:
 
         if it % 10 == 0:
             dt = time.time() - t0
-            print(f"[iter {it}] buffer={len(buffer)} {last} ({dt:.1f}s)")
+            tqdm.write(f"[iter {it}] buffer={len(buffer)} {last} ({dt:.1f}s)")
+            if last:
+                pbar.set_postfix(buf=len(buffer), loss=round(last.get("loss", 0.0), 3))
 
         # ---- skill evaluation: the curve that should actually rise ----
         if cfg.train.eval_every and it > 0 and it % cfg.train.eval_every == 0:
@@ -92,13 +103,13 @@ def main(cfg: Config | None = None) -> None:
             metrics.log(skill_row)
             wr = " ".join(f"{k}={v}" for k, v in skill.items() if k.startswith("vs_")
                           and not k.endswith(("_draw", "_plies", "_n")))
-            print(f"[eval {it}] {wr}")
+            tqdm.write(f"[eval {it}] {wr}")
 
         if it > 0 and it % cfg.train.checkpoint_every == 0:
             path = checkpoint_path(cfg.train.checkpoint_dir, it, prefix="deepnash")
             torch.save({"net": net.state_dict(), "iter": it,
                         "net_cfg": asdict(cfg.network), "enc_cfg": asdict(cfg.encoding)}, path)
-            print(f"[train] saved {path}")
+            tqdm.write(f"[train] saved {path}")
 
 
 if __name__ == "__main__":

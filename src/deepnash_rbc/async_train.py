@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import queue
+import sys
 import time
 from dataclasses import asdict
 from typing import Dict, List
@@ -31,6 +32,7 @@ from typing import Dict, List
 import numpy as np
 import torch
 import torch.multiprocessing as mp
+from tqdm import tqdm
 
 from .checkpoints import (
     checkpoint_path,
@@ -181,6 +183,14 @@ def run_async(cfg: Config | None = None) -> None:
     last_log = 0.0
     games_seen = start_games_seen  # cumulative across resumes (see checkpoint save)
     warmup_start = time.time()
+    # Sticky bottom progress bar; all in-loop logging goes through tqdm.write so it
+    # scrolls above the bar instead of mangling it. Disabled off a TTY (redirected
+    # logs) or via --no-progress.
+    pbar = tqdm(
+        total=cfg.train.total_iters, initial=start_step, unit="step", desc="train",
+        dynamic_ncols=True, smoothing=0.05,
+        disable=not (cfg.train.progress and sys.stdout.isatty()),
+    )
     try:
         while step < cfg.train.total_iters:
             # 1) drain finished trajectories into the buffer
@@ -211,6 +221,7 @@ def run_async(cfg: Config | None = None) -> None:
                 step = last["steps"]
                 metrics.log({"step": step, "type": "train", "drained": drained,
                              "games_seen": games_seen, "buffer": len(buffer), **last})
+                pbar.update(step - pbar.n)  # advance bar to the current step
 
             # 4) broadcast fresh weights to actors
             if step % cfg.train.weight_broadcast_every == 0:
@@ -228,7 +239,7 @@ def run_async(cfg: Config | None = None) -> None:
                 metrics.log({"step": step, "type": "skill", **skill})
                 wr = " ".join(f"{k}={v}" for k, v in skill.items()
                               if k.startswith("vs_") and not k.endswith(("_draw", "_plies", "_n")))
-                print(f"[eval step {step}] {wr}")
+                tqdm.write(f"[eval step {step}] {wr}")
 
             # 6) checkpoint
             if step > 0 and step % cfg.train.checkpoint_every == 0:
@@ -240,13 +251,16 @@ def run_async(cfg: Config | None = None) -> None:
                             "iteration": learner.iteration,
                             "games_seen": games_seen,
                             "net_cfg": asdict(cfg.network), "enc_cfg": asdict(cfg.encoding)}, path)
-                print(f"[async] saved {path}")
+                tqdm.write(f"[async] saved {path}")
 
             if time.time() - last_log > 10:
-                print(f"[async step {step}] buffer={len(buffer)} "
-                      f"qsize~{_qsize(traj_q)} games_seen={games_seen} {last}")
+                tqdm.write(f"[async step {step}] buffer={len(buffer)} "
+                           f"qsize~{_qsize(traj_q)} games_seen={games_seen} {last}")
+                pbar.set_postfix(buf=len(buffer), q=_qsize(traj_q),
+                                 games=games_seen, loss=round(last.get("loss", 0.0), 3))
                 last_log = time.time()
     finally:
+        pbar.close()
         stop_event.set()
         # terminate actors directly (they may be mid-game and not checking the
         # event); they are stateless self-play workers so this is safe.
