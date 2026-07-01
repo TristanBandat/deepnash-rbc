@@ -73,13 +73,13 @@ class TrainConfig:
         8  # self-play games collected before each learner update batch
     )
     learner_steps_per_iter: int = 4
-    total_iters: int = 1_000_000
-    batch_trajectories: int = 16  # trajectories sampled from buffer per learner step
+    total_iters: int = 50_000
+    batch_trajectories: int = 32  # trajectories sampled from buffer per learner step
     buffer_capacity: int = 4096
     num_actors: int = 1  # >1 uses torch.multiprocessing (see selfplay.py)
     device: str = "cuda"  # falls back to cpu automatically if unavailable
     seconds_per_player: float = 900.0
-    checkpoint_every: int = 1000
+    checkpoint_every: int = 10_000
     checkpoint_dir: str = "checkpoints"
     seed: int = 0
     # resume: None = fresh start; "auto" = latest checkpoint in checkpoint_dir;
@@ -88,7 +88,7 @@ class TrainConfig:
     # --- evaluation / skill metrics ---
     # eval_every: int = 50        # run a skill eval every N iterations (0 disables)
     eval_every: int = 10_000
-    eval_games: int = 20  # games per opponent (split evenly across colors)
+    eval_games: int = 50  # games per opponent (split evenly across colors)
     eval_opponents: tuple = (
         "random",
         "attacker",
@@ -111,12 +111,12 @@ class TrainConfig:
     # Override for a one-off run without editing this file: DEEPNASH_IGNORE_IDLE=1.
     idle_schedule: bool = True
     train_start_hour: int = 19  # window opens (training resumes) at 19:00
-    train_stop_hour: int = 6  # window closes (training pauses) at 06:00
+    train_stop_hour: int = 8  # window closes (training pauses) at 06:00
     train_days: tuple = (0, 1, 2, 3, 4)  # nights starting Mon-Fri (Mon=0 .. Sun=6)
     # --- async actor/learner (deepnash-train-async) ---
     # In async mode, eval_every / checkpoint_every / total_iters count LEARNER
     # STEPS, not outer iterations.
-    async_actors: int = 4  # persistent CPU self-play workers
+    async_actors: int = 16  # persistent CPU self-play workers
     traj_queue_size: int = 256  # actor->learner queue cap (backpressure)
     min_buffer_to_train: int = 64  # warmup: learner waits for this many trajectories
     drain_per_cycle: int = 64  # max trajectories pulled from queue per learner cycle
