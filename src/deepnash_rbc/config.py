@@ -73,7 +73,7 @@ class TrainConfig:
         8  # self-play games collected before each learner update batch
     )
     learner_steps_per_iter: int = 4
-    total_iters: int = 50_000
+    total_iters: int = 100_000
     batch_trajectories: int = 32  # trajectories sampled from buffer per learner step
     buffer_capacity: int = 4096
     num_actors: int = 1  # >1 uses torch.multiprocessing (see selfplay.py)
