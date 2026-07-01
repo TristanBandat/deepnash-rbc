@@ -20,6 +20,7 @@ Baselines:
 from __future__ import annotations
 
 import os
+import random
 from typing import Dict, List
 
 import chess
@@ -45,14 +46,44 @@ def _ensure_stockfish() -> str | None:
     return path
 
 
+def _make_trout():
+    """Build a TroutBot that never hands Stockfish an illegal position.
+
+    RBC belief boards are frequently illegal as standard chess (missing enemy
+    king, side-not-to-move left in check, ...). Stockfish does not validate its
+    input and *segfaults* on many such positions, killing the engine mid-eval.
+    reconchess's TroutBot only guards the king-capture case, so we subclass it to
+    add the same ``board.is_valid()`` gate that StockfishAnalyst already relies on
+    (see analysis/engine.py); on an illegal board we fall back to a random legal
+    move instead of feeding it to the engine."""
+    from reconchess.bots.trout_bot import TroutBot
+
+    class SafeTroutBot(TroutBot):
+        def choose_move(self, move_actions, seconds_left):
+            # keep reconchess's king-capture shortcut
+            enemy_king = self.board.king(not self.color)
+            if enemy_king:
+                attackers = self.board.attackers(self.color, enemy_king)
+                if attackers:
+                    return chess.Move(attackers.pop(), enemy_king)
+            # TroutBot sets turn/clear_stack right before engine.play; mirror that
+            # so is_valid() checks the exact position we'd otherwise send.
+            self.board.turn = self.color
+            self.board.clear_stack()
+            if not self.board.is_valid():
+                return random.choice(move_actions) if move_actions else None
+            return super().choose_move(move_actions, seconds_left)
+
+    return SafeTroutBot()
+
+
 def _make_opponent(name: str):
     if name == "random":
         return RandomBot()
     if name == "attacker":
         return AttackerBot()
     if name == "trout":
-        from reconchess.bots.trout_bot import TroutBot
-        return TroutBot()
+        return _make_trout()
     raise ValueError(f"unknown opponent: {name}")
 
 
