@@ -1,0 +1,66 @@
+{
+  "encoding": {
+    "frame_channels": 19,
+    "history": 8
+  },
+  "network": {
+    "blocks": 6,
+    "channels": 128,
+    "move_actions": 4673,
+    "sense_actions": 64,
+    "value_hidden": 128
+  },
+  "rnad": {
+    "amp": true,
+    "c_clip": 1.0,
+    "compile_net": false,
+    "eta": 0.2,
+    "fast_learner": true,
+    "full_action_neurd": true,
+    "gamma": 1.0,
+    "grad_clip": 10.0,
+    "iteration_steps": 1000,
+    "lr": 5e-05,
+    "neurd_clip": 2.5,
+    "rho_clip": 1.0,
+    "value_coef": 1.0
+  },
+  "train": {
+    "async_actors": 16,
+    "batch_trajectories": 16,
+    "buffer_capacity": 4096,
+    "checkpoint_dir": "checkpoints",
+    "checkpoint_every": 10000,
+    "device": "cuda",
+    "drain_per_cycle": 64,
+    "eval_every": 10000,
+    "eval_games": 20,
+    "eval_opponents": [
+      "random",
+      "attacker",
+      "trout"
+    ],
+    "games_per_iter": 8,
+    "idle_schedule": true,
+    "learner_steps_per_iter": 4,
+    "metrics_path": "checkpoints/v0.4.0/metrics_v0.4.0.jsonl",
+    "min_buffer_to_train": 64,
+    "num_actors": 1,
+    "progress": true,
+    "resume": null,
+    "seconds_per_player": 900.0,
+    "seed": 0,
+    "total_iters": 100000,
+    "train_days": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "train_start_hour": 19,
+    "train_stop_hour": 6,
+    "traj_queue_size": 256,
+    "weight_broadcast_every": 20
+  }
+}
