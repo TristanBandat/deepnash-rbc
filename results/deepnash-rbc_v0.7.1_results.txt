@@ -1,0 +1,26 @@
+Loaded checkpoints/v0.7.1/deepnash_async_v0.7.1_100000.pt (history=8); engine=tools/stockfish/stockfish-ubuntu-x86-64-bmi2
+[mq] game 1/10 (W) analysed: 5 moves
+[mq] game 2/10 (B) analysed: 4 moves
+[mq] game 3/10 (W) analysed: 6 moves
+[mq] game 4/10 (B) analysed: 3 moves
+[mq] game 5/10 (W) analysed: 5 moves
+[mq] game 6/10 (B) analysed: 3 moves
+[mq] game 7/10 (W) analysed: 6 moves
+[mq] game 8/10 (B) analysed: 4 moves
+[mq] game 9/10 (W) analysed: 6 moves
+[mq] game 10/10 (B) analysed: 7 moves
+
+=== Move quality (vs ground-truth board) ===
+            ACPL  blunder%   top1%  scored  no-eval
+white      345.5     43.5%   21.7%      23        5
+black      202.7     26.7%    0.0%      15        6
+overall    289.1     36.8%   13.2%      38       11
+
+Information cost (centipawns, higher = imperfect info hurt more):
+  A  taken move: true board vs naive-belief board   +31.7 cp  (n=37, proxy belief)
+  B  on true board: taken vs requested move         +0.0 cp  (n=34, truncation cost)
+  truncated moves (requested != taken): 5/49
+
+=== Strength ladder (win-rate vs TroutBot @ Skill Level) ===
+[ladder] skill=15  win=0.85  draw=0.0  (n=100)
+[ladder] skill=20  win=0.92  draw=0.0  (n=100)
