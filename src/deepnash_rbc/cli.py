@@ -161,6 +161,18 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         "plays CPU games, so pause it when the learner is fast). Default: config value.",
     )
     p.add_argument(
+        "--eval-opponents",
+        nargs="+",
+        default=None,
+        metavar="NAME",
+        choices=["random", "attacker", "trout"],
+        help="Opponents for the in-training skill eval; your agent plays each as "
+        "both colors for win/draw/loss rates. 'trout' needs Stockfish (skipped if "
+        "none is found). The heavy MHT/StrangeFish bots are intentionally NOT "
+        "available here -- use them only in the stockfish-eval script "
+        "(deepnash-stockfish-eval --mq-opponent). Default: config value.",
+    )
+    p.add_argument(
         "--async-actors",
         type=int,
         default=None,
@@ -247,6 +259,8 @@ def config_from_args(argv: list[str] | None = None, prog: str | None = None) -> 
         cfg.train.seed = args.seed
     if args.eval_every is not None:
         cfg.train.eval_every = args.eval_every
+    if args.eval_opponents is not None:
+        cfg.train.eval_opponents = tuple(args.eval_opponents)
     if args.async_actors is not None:
         cfg.train.async_actors = args.async_actors
     if args.num_actors is not None:

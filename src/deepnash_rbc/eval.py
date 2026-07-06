@@ -15,6 +15,17 @@ Baselines:
               bundled in tools/stockfish/ -- which is then exported as
               STOCKFISH_EXECUTABLE so reconchess's TroutBot picks it up.
               This is the meaningful "is it actually playing chess" bar.
+Heavyweight opponents -- NOT training baselines (too slow for the in-training
+loop; deliberately kept out of eval_opponents). They are available through
+_make_opponent for the stockfish-eval move-quality report only, i.e.
+`deepnash-stockfish-eval --mq-opponent <name>`:
+  mht          -- reconchess-tools MhtBot: exhaustive multi-hypothesis board
+                  tracking + a Stockfish ranked-choice vote. The open reference
+                  implementation of the RBC "Oracle"-class algorithm.
+  strangefish2 -- StrangeFish2, NeurIPS 2021 (ginoperrotta/reconchess-strangefish2).
+                  Ships no PyPI package, so it is vendored as a git submodule under
+                  third_party/ (run `git submodule update --init` once).
+Both need Stockfish.
 """
 
 from __future__ import annotations
@@ -77,6 +88,66 @@ def _make_trout():
     return SafeTroutBot()
 
 
+# Opponents that need a Stockfish binary; skipped in evaluate() when none is found.
+ENGINE_OPPONENTS = ("trout", "mht", "strangefish2")
+
+
+def _third_party_path(name: str) -> str:
+    """Locate a vendored bot submodule ``third_party/<name>/`` (which contains a
+    ``strangefish`` package). Mirrors bundled_stockfish's repo-root inference so it
+    works under ``uv run`` from the project dir even though ``third_party/`` is not
+    part of the installed package."""
+    from pathlib import Path
+
+    for root in (Path(__file__).resolve().parents[2], Path.cwd()):
+        cand = root / "third_party" / name
+        if (cand / "strangefish").is_dir():
+            return str(cand)
+    raise FileNotFoundError(
+        f"third_party/{name} not found -- initialise the submodule with "
+        f"`git submodule update --init third_party/{name}`."
+    )
+
+
+def _compat_random_sample_sets() -> None:
+    """StrangeFish2 predates Python 3.11, where ``random.sample()`` stopped accepting
+    sets/dicts. It calls ``random.sample(<set>, k)`` in a hot path (its board set),
+    including inside forked pool workers, which inherit this patch. Install a one-time,
+    behaviour-preserving shim that coerces a non-sequence population to a list --
+    matching pre-3.11 semantics -- so the vendored code runs unmodified. We use
+    ``list()`` not ``sorted()`` because the board set holds unsortable ``chess.Board``
+    objects. Transparent for sequence inputs (our code, reconchess)."""
+    import random
+
+    if getattr(random.sample, "_deepnash_setsafe", False):
+        return
+    _orig = random.sample
+
+    def sample(population, k, *args, **kwargs):
+        if isinstance(population, (set, frozenset, dict)):
+            population = list(population)
+        return _orig(population, k, *args, **kwargs)
+
+    sample._deepnash_setsafe = True
+    random.sample = sample
+
+
+def _make_strangefish2():
+    """StrangeFish2 (NeurIPS 2021, ginoperrotta/reconchess-strangefish2). Vendored as a
+    git submodule since it ships no PyPI package; imported lazily so its Stockfish env
+    check and the random.sample compat shim run first."""
+    import sys
+
+    _ensure_stockfish()  # strangefish.utilities.stockfish reads the env var at import
+    _compat_random_sample_sets()
+    path = _third_party_path("strangefish2")
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    from strangefish.strangefish_strategy import StrangeFish2
+
+    return StrangeFish2(game_id="deepnash-eval")
+
+
 def _make_opponent(name: str):
     if name == "random":
         return RandomBot()
@@ -84,6 +155,13 @@ def _make_opponent(name: str):
         return AttackerBot()
     if name == "trout":
         return _make_trout()
+    if name == "mht":
+        _ensure_stockfish()  # reconchess_tools.stockfish reads the env var at import
+        from reconchess_tools.example_bot.bot import MhtBot
+
+        return MhtBot()
+    if name == "strangefish2":
+        return _make_strangefish2()
     raise ValueError(f"unknown opponent: {name}")
 
 
@@ -96,8 +174,8 @@ def evaluate(
 ) -> Dict[str, float]:
     net.eval()
     opponents = list(opponents or cfg.train.eval_opponents)
-    if "trout" in opponents and not _ensure_stockfish():
-        opponents = [o for o in opponents if o != "trout"]  # skip only if no engine
+    if any(o in ENGINE_OPPONENTS for o in opponents) and not _ensure_stockfish():
+        opponents = [o for o in opponents if o not in ENGINE_OPPONENTS]  # skip if no engine
     n = games_per_opponent or cfg.train.eval_games
     history = cfg.encoding.history
 

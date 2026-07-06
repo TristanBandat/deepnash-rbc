@@ -3,18 +3,25 @@
 Two analyses, both driven by a Stockfish binary (set STOCKFISH_EXECUTABLE or put
 `stockfish` on PATH):
 
-  1. MOVE QUALITY -- play the agent for N games, then replay each game against
-     the ground-truth board and grade its moves with Stockfish: ACPL, blunder
-     rate, top-1 match, plus two information-cost figures (see analysis/
-     move_quality.py).  This separates *chess skill* from *information skill*.
+  1. MOVE QUALITY -- play the agent for N games against each chosen opponent, then
+     replay every game against the ground-truth board and grade its moves with
+     Stockfish: ACPL, blunder rate, top-1 match, plus two information-cost figures
+     (see analysis/move_quality.py).  This separates *chess skill* from *information
+     skill*.  --mq-opponent takes one or more opponents; each gets its own section
+     reporting win/draw/loss (from those same games) and the move-quality table, so
+     the opponent drives every number, not just the grading.
 
   2. STRENGTH LADDER -- play the agent vs TroutBot at a sweep of UCI Skill
      Levels and report win-rate per level, a cheap strength curve.
 
 Usage:
   uv run deepnash-stockfish-eval --checkpoint checkpoints/latest.pt
-  uv run deepnash-stockfish-eval -c ckpt.pt --mq-games 20 --depth 14 \
-      --ladder-levels 0,5,10,20 --ladder-games 10 --json report.json
+  uv run deepnash-stockfish-eval -c ckpt.pt --num-games 20 --mq-opponent mht strangefish2 \
+      --ladder-levels 15,20 --json report.json
+
+Defaults: device cuda; move-quality opponents trout/mht (strangefish2 opt-in); ladder at
+Skill Level 20 only; --num-games (default 10) drives both the per-opponent and
+per-ladder-level game counts unless --mq-games / --ladder-games override it.
 """
 
 from __future__ import annotations
@@ -29,7 +36,7 @@ import torch
 from reconchess import LocalGame, play_local_game
 
 from .analysis.engine import StockfishAnalyst, resolve_engine_path
-from .analysis.ladder import DEFAULT_LEVELS, make_ladder_opponent
+from .analysis.ladder import make_ladder_opponent
 from .analysis.move_quality import Aggregate, aggregate, analyze_game, merge
 from .agent import RNaDPlayer
 from .eval import _make_opponent
@@ -37,45 +44,65 @@ from .play_session import load_net
 
 
 def _play_game(net, device, history, opponent_name, agent_is_white, seconds_per_player):
-    """Play one game; return (history, agent_color, belief_fens) or None."""
+    """Play one game; return (history, agent_color, belief_fens, winner_color) or None."""
     agent = RNaDPlayer(net, device, history=history, sample=False, track_belief=True)
     opponent = _make_opponent(opponent_name)
     white, black = (agent, opponent) if agent_is_white else (opponent, agent)
     game = LocalGame(seconds_per_player=seconds_per_player)
     try:
-        _winner, _reason, hist = play_local_game(white, black, game=game)
+        winner, _reason, hist = play_local_game(white, black, game=game)
     except Exception as e:
         print(f"[mq] game vs {opponent_name} aborted: {type(e).__name__}: {e}")
         return None
     color = chess.WHITE if agent_is_white else chess.BLACK
-    return hist, color, list(agent.belief_fens)
+    return hist, color, list(agent.belief_fens), winner
 
 
-def run_move_quality(net, device, args, analyst: StockfishAnalyst) -> Dict:
+def _run_one_opponent(net, device, args, analyst, opp_name) -> Dict:
+    """Play args.mq_games vs one opponent and grade them. Returns a report dict with
+    win/draw/loss (the outcome of those same games) plus per-colour and overall
+    move-quality aggregates -- so choosing an opponent drives *all* the numbers."""
     per_color: Dict[bool, List[Aggregate]] = {chess.WHITE: [], chess.BLACK: []}
+    wins = draws = losses = played = 0
     for g in range(args.mq_games):
         agent_is_white = (g % 2 == 0)
-        played = _play_game(net, device, args.history, args.mq_opponent,
-                            agent_is_white, args.seconds_per_player)
-        if played is None:
+        got = _play_game(net, device, args.history, opp_name,
+                         agent_is_white, args.seconds_per_player)
+        if got is None:
             continue
-        hist, color, belief_fens = played
+        hist, color, belief_fens, winner = got
+        played += 1
+        outcome = "draw" if winner is None else ("win" if winner == color else "loss")
+        if outcome == "win":
+            wins += 1
+        elif outcome == "draw":
+            draws += 1
+        else:
+            losses += 1
         records = analyze_game(hist, color, analyst,
                                belief_fens=belief_fens if args.belief else None)
         per_color[color].append(aggregate(records))
-        print(f"[mq] game {g + 1}/{args.mq_games} "
-              f"({'W' if color else 'B'}) analysed: "
-              f"{len(records)} moves")
-    out: Dict[str, Dict] = {}
+        print(f"[mq:{opp_name}] game {g + 1}/{args.mq_games} "
+              f"({'W' if color else 'B'}, {outcome}): {len(records)} moves analysed")
+    out: Dict[str, object] = {
+        "n": played, "wins": wins, "draws": draws, "losses": losses,
+        "win_rate": round(wins / played, 4) if played else None,
+        "draw_rate": round(draws / played, 4) if played else None,
+    }
     all_aggs: List[Aggregate] = []
     for color, label in ((chess.WHITE, "white"), (chess.BLACK, "black")):
         if per_color[color]:
-            m = merge(per_color[color])
-            out[label] = asdict(m)
+            out[label] = asdict(merge(per_color[color]))
             all_aggs.extend(per_color[color])
     if all_aggs:
         out["overall"] = asdict(merge(all_aggs))
     return out
+
+
+def run_move_quality(net, device, args, analyst: StockfishAnalyst) -> Dict:
+    """Grade the agent against each opponent in args.mq_opponent, keyed by name."""
+    return {opp: _run_one_opponent(net, device, args, analyst, opp)
+            for opp in args.mq_opponent}
 
 
 def run_ladder(net, device, args) -> List[Dict]:
@@ -118,37 +145,50 @@ def run_ladder(net, device, args) -> List[Dict]:
 
 
 def _print_move_quality(mq: Dict) -> None:
-    print("\n=== Move quality (vs ground-truth board) ===")
-    hdr = f"{'':8} {'ACPL':>7} {'blunder%':>9} {'top1%':>7} {'scored':>7} {'no-eval':>8}"
-    print(hdr)
-    for label in ("white", "black", "overall"):
-        a = mq.get(label)
-        if not a:
-            continue
-        print(f"{label:8} {a['acpl']:>7} {a['blunder_rate'] * 100:>8.1f}% "
-              f"{a['top1_rate'] * 100:>6.1f}% {a['n_scored']:>7} {a['n_no_eval']:>8}")
-    ov = mq.get("overall")
-    if ov:
-        print("\nInformation cost (centipawns, higher = imperfect info hurt more):")
-        if ov.get("cost_A_mean") is not None:
-            print(f"  A  taken move: true board vs naive-belief board   "
-                  f"{ov['cost_A_mean']:+.1f} cp  (n={ov['cost_A_n']}, proxy belief)")
-        if ov.get("cost_B_mean") is not None:
-            print(f"  B  on true board: taken vs requested move         "
-                  f"{ov['cost_B_mean']:+.1f} cp  (n={ov['cost_B_n']}, truncation cost)")
-        print(f"  truncated moves (requested != taken): {ov['n_truncated']}/{ov['n_moves']}")
+    """Print one labelled section per opponent: win/draw/loss over the games played,
+    the per-colour ACPL table, and the information-cost summary."""
+    for opp_name, res in mq.items():
+        print(f"\n=== vs {opp_name}  (n={res['n']}  "
+              f"W/D/L={res['wins']}/{res['draws']}/{res['losses']}  "
+              f"win={res['win_rate']}  draw={res['draw_rate']}) ===")
+        print(f"{'':8} {'ACPL':>7} {'blunder%':>9} {'top1%':>7} {'scored':>7} {'no-eval':>8}")
+        for label in ("white", "black", "overall"):
+            a = res.get(label)
+            if not a:
+                continue
+            print(f"{label:8} {a['acpl']:>7} {a['blunder_rate'] * 100:>8.1f}% "
+                  f"{a['top1_rate'] * 100:>6.1f}% {a['n_scored']:>7} {a['n_no_eval']:>8}")
+        ov = res.get("overall")
+        if ov:
+            print("  Information cost (centipawns, higher = imperfect info hurt more):")
+            if ov.get("cost_A_mean") is not None:
+                print(f"    A  taken move: true board vs naive-belief board   "
+                      f"{ov['cost_A_mean']:+.1f} cp  (n={ov['cost_A_n']}, proxy belief)")
+            if ov.get("cost_B_mean") is not None:
+                print(f"    B  on true board: taken vs requested move         "
+                      f"{ov['cost_B_mean']:+.1f} cp  (n={ov['cost_B_n']}, truncation cost)")
+            print(f"    truncated moves (requested != taken): {ov['n_truncated']}/{ov['n_moves']}")
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Stockfish performance report for a checkpoint.")
     p.add_argument("-c", "--checkpoint", required=True, help="path to a .pt checkpoint")
     p.add_argument("--history", type=int, default=8, help="observation history frames (match training)")
-    p.add_argument("--device", default="cpu", help="torch device (cpu/cuda)")
+    p.add_argument("--device", default="cuda", help="torch device (cuda/cpu)")
     p.add_argument("--seconds-per-player", type=float, default=900.0)
+    p.add_argument("-n", "--num-games", type=int, default=10,
+                   help="games to play per move-quality opponent AND per ladder level. "
+                        "Overridden per-section by --mq-games / --ladder-games.")
     # move-quality
-    p.add_argument("--mq-games", type=int, default=10, help="games to analyse (0 to skip)")
-    p.add_argument("--mq-opponent", default="attacker", choices=["random", "attacker", "trout"],
-                   help="opponent for move-quality games (engine-free default)")
+    p.add_argument("--mq-games", type=int, default=None,
+                   help="override --num-games for the move-quality report (0 to skip)")
+    p.add_argument("--mq-opponent", nargs="+", default=["trout", "mht"], metavar="NAME",
+                   choices=["random", "attacker", "trout", "mht", "strangefish2"],
+                   help="one or more opponents for the move-quality report; each is played "
+                        "for --num-games games and gets its own win/draw/loss + ACPL section "
+                        "(default 'trout mht'; mht and strangefish2 are strong, slow, and "
+                        "print their own progress output -- strangefish2 is opt-in as it is "
+                        "especially slow)")
     p.add_argument("--depth", type=int, default=12, help="Stockfish analysis depth")
     p.add_argument("--movetime", type=float, default=None, help="seconds/position (overrides --depth)")
     p.add_argument("--blunder-cp", type=int, default=200, help="centipawn-loss threshold for a blunder")
@@ -156,8 +196,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="skip the constructed-belief cost (analysis A)")
     # ladder
     p.add_argument("--ladder-levels", default=None,
-                   help="comma-separated UCI Skill Levels, e.g. 0,5,10,20 (empty to skip)")
-    p.add_argument("--ladder-games", type=int, default=10, help="games per ladder level")
+                   help="comma-separated UCI Skill Levels, e.g. 0,5,10,20 (default: 20 only; empty to skip)")
+    p.add_argument("--ladder-games", type=int, default=None,
+                   help="override --num-games for the ladder")
     # output
     p.add_argument("--json", default=None, help="also write the full report to this path")
     return p
@@ -165,8 +206,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    # A single --num-games sets every game count; the per-section flags override it.
+    if args.mq_games is None:
+        args.mq_games = args.num_games
+    if args.ladder_games is None:
+        args.ladder_games = args.num_games
     if args.ladder_levels is None:
-        args.ladder_levels = list(DEFAULT_LEVELS)
+        args.ladder_levels = [20]  # full strength only unless a sweep is given
     elif args.ladder_levels.strip() == "":
         args.ladder_levels = []
     else:
@@ -191,6 +237,7 @@ def main() -> None:
                               blunder_cp=args.blunder_cp) as analyst:
             mq = run_move_quality(net, device, args, analyst)
         report["move_quality"] = mq
+        print("\n=== Move quality & win-rate (vs ground-truth board) ===")
         _print_move_quality(mq)
 
     if args.ladder_levels:
