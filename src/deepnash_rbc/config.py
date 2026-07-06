@@ -15,7 +15,7 @@ from .encoding.moves import MOVE_ACTIONS, SENSE_ACTIONS
 
 @dataclass
 class EncodingConfig:
-    history: int = 8  # number of past observation frames stacked into the input tensor
+    history: int = 32  # number of past observation frames stacked into the input tensor
     frame_channels: int = FRAME_CHANNELS
 
     @property
