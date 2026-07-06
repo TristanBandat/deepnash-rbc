@@ -54,9 +54,9 @@ IGNORE_IDLE = True
 # (bump_level, args) per run; args pass straight to deepnash-train-async.
 # Example: sweep the observation history length across three versions.
 RUNS: list[tuple[str, list[str]]] = [
-    ("minor", ["--history", "4"]),
-    ("minor", ["--history", "8"]),
-    ("minor", ["--history", "16"]),
+    ("minor", ["--history", "32"]),
+    ("minor", ["--history", "64"]),
+    ("minor", ["--history", "128"]),
 ]
 # -----------------------------------------------------------------------------
 
@@ -66,7 +66,9 @@ def write_version(version: str) -> None:
     # replace the first (project-table) version assignment only
     new, n = re.subn(r'(?m)^version = "[^"]*"', f'version = "{version}"', text, count=1)
     if n != 1:
-        raise RuntimeError("could not find a 'version = \"...\"' line in pyproject.toml")
+        raise RuntimeError(
+            "could not find a 'version = \"...\"' line in pyproject.toml"
+        )
     PYPROJECT.write_text(new)
 
 
@@ -84,7 +86,9 @@ def plan_versions() -> list[tuple[str, list[str]]]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Chain auto-versioned training runs.")
-    ap.add_argument("--dry-run", action="store_true", help="print the plan, run nothing")
+    ap.add_argument(
+        "--dry-run", action="store_true", help="print the plan, run nothing"
+    )
     args = ap.parse_args()
 
     found = existing_versions(str(CHECKPOINTS))
@@ -102,10 +106,14 @@ def main() -> None:
     for i, (version, run_args) in enumerate(plan, 1):
         write_version(version)  # what get_version() reads in the subprocess
         cmd = ["uv", "run", "deepnash-train-async", *run_args]
-        print(f"\n[campaign] === run {i}/{len(plan)}  v{version} ===\n[campaign] $ {' '.join(cmd)}")
+        print(
+            f"\n[campaign] === run {i}/{len(plan)}  v{version} ===\n[campaign] $ {' '.join(cmd)}"
+        )
         result = subprocess.run(cmd, cwd=ROOT, env=env)
         if result.returncode != 0:
-            print(f"[campaign] run {i} (v{version}) exited {result.returncode}; stopping.")
+            print(
+                f"[campaign] run {i} (v{version}) exited {result.returncode}; stopping."
+            )
             sys.exit(result.returncode)
     print("\n[campaign] all runs complete.")
 
