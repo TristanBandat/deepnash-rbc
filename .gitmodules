@@ -1,0 +1,3 @@
+[submodule "third_party/strangefish2"]
+	path = third_party/strangefish2
+	url = https://github.com/ginoperrotta/reconchess-strangefish2
