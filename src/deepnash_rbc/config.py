@@ -73,7 +73,7 @@ class TrainConfig:
         8  # self-play games collected before each learner update batch
     )
     learner_steps_per_iter: int = 4
-    total_iters: int = 100_000
+    total_iters: int = 80_000
     batch_trajectories: int = 32  # trajectories sampled from buffer per learner step
     buffer_capacity: int = 4096
     num_actors: int = 1  # >1 uses torch.multiprocessing (see selfplay.py)
@@ -87,7 +87,8 @@ class TrainConfig:
     resume: str | None = None
     # --- evaluation / skill metrics ---
     # eval_every: int = 50        # run a skill eval every N iterations (0 disables)
-    eval_every: int = 10_000
+    # eval_every: int = 10_000
+    eval_every: int = 0
     eval_games: int = 50  # games per opponent (split evenly across colors)
     eval_opponents: tuple = (
         "random",
