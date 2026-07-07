@@ -1,15 +1,15 @@
 [project]
 name = "deepnash-rbc"
-version = "0.8.0"
+version = "0.10.0"
 description = "A model-free R-NaD (DeepNash-style) self-play agent for Reconnaissance Blind Chess (RBC)."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "reconchess>=1.6.9",
-    "torch>=2.2",
-    "numpy>=1.24",
-    "tqdm>=4.66",
-    "reconchess-tools>=0.2.1",
+  "reconchess>=1.6.9",
+  "torch>=2.2",
+  "numpy>=1.24",
+  "tqdm>=4.66",
+  "reconchess-tools>=0.2.1",
 ]
 
 [project.optional-dependencies]
