@@ -54,9 +54,11 @@ IGNORE_IDLE = True
 # (bump_level, args) per run; args pass straight to deepnash-train-async.
 # Example: sweep the observation history length across three versions.
 RUNS: list[tuple[str, list[str]]] = [
+    ("minor", ["--history", "16"]),
     ("minor", ["--history", "32"]),
     ("minor", ["--history", "64"]),
     ("minor", ["--history", "128"]),
+    ("minor", ["--history", "256"]),
 ]
 # -----------------------------------------------------------------------------
 
