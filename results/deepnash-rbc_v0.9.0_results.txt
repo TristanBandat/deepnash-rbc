@@ -1,0 +1,39 @@
+Loaded checkpoints/v0.9.0/deepnash_async_v0.9.0_80000.pt (history=32); engine=/home/tristan/Dropbox/JKU/Semester_14/02_thesis/deepnash-rbc/tools/stockfish/stockfish-ubuntu-x86-64-bmi2; device=cuda; workers=8
+[mq:mht] game skipped (game_error): EngineTerminatedError: engine process died unexpectedly (exit code: -11)
+[mq:mht] game skipped (game_error): IndexError: list index out of range
+[mq:mht] game skipped (game_error): IndexError: list index out of range
+[mq:mht] game skipped (game_error): IndexError: list index out of range
+[mq:mht] game skipped (game_error): IndexError: list index out of range
+[mq:mht] game skipped (game_error): IndexError: list index out of range
+[mq:mht] game skipped (game_error): IndexError: list index out of range
+[mq:mht] game skipped (game_error): IndexError: list index out of range
+[mq:mht] game skipped (game_error): EngineTerminatedError: engine process died unexpectedly (exit code: -11)
+[mq:mht] game skipped (game_error): IndexError: list index out of range
+[mq:mht] game skipped (game_error): IndexError: list index out of range
+[mq:mht] game skipped (game_error): IndexError: list index out of range
+[mq:mht] game skipped (game_error): IndexError: list index out of range
+
+=== Move quality & win-rate (vs ground-truth board) ===
+
+=== vs trout  (n=100  W/D/L=96/0/4  win=0.96  draw=0.0) ===
+            ACPL  blunder%   top1%  scored  no-eval
+white      207.1     32.0%   11.5%     234       58
+black      275.8     39.0%    5.6%     195       59
+overall    238.3     35.2%    8.9%     429      117
+  Information cost (centipawns, higher = imperfect info hurt more):
+    A  taken move: true board vs naive-belief board   +51.2 cp  (n=424, proxy belief)
+    B  on true board: taken vs requested move         +0.0 cp  (n=329, truncation cost)
+    truncated moves (requested != taken): 113/546
+
+=== vs mht  (n=87  W/D/L=34/0/53  win=0.3908  draw=0.0) ===
+            ACPL  blunder%   top1%  scored  no-eval
+white      136.4     25.3%    1.0%     308       51
+black      195.3     24.7%    4.4%     344       38
+overall    167.5     25.0%    2.8%     652       89
+  Information cost (centipawns, higher = imperfect info hurt more):
+    A  taken move: true board vs naive-belief board   +14.9 cp  (n=637, proxy belief)
+    B  on true board: taken vs requested move         +0.0 cp  (n=455, truncation cost)
+    truncated moves (requested != taken): 228/741
+
+=== Strength ladder (win-rate vs TroutBot @ Skill Level) ===
+[ladder] skill=20  win=0.91  draw=0.0  (n=100)
