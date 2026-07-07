@@ -135,10 +135,19 @@ class ObservationEncoder:
             r, c = _rc(capture_square)
             self._cur[C_CAPTURED_THEIRS, r, c] = 1.0
 
-    def commit_turn(self) -> None:
-        self._frames.append(self._cur.copy())
+    def commit_turn(self) -> np.ndarray:
+        """Finalize the turn's frame; returns it so callers (replay recording)
+        can store each committed frame exactly once (see replay.Trajectory)."""
+        committed = self._cur.copy()
+        self._frames.append(committed)
+        return committed
 
     # -- output --------------------------------------------------------------
+    def frame(self) -> np.ndarray:
+        """The in-progress frame for the current decision point (the last slice
+        of ``tensor()``). Mutated by the per-turn callbacks; copy before storing."""
+        return self._cur
+
     def tensor(self) -> np.ndarray:
         frames = list(self._frames)[1:] + [self._cur]
         return np.concatenate(frames, axis=0)
