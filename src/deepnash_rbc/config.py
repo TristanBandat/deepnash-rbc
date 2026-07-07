@@ -15,7 +15,9 @@ from .encoding.moves import MOVE_ACTIONS, SENSE_ACTIONS
 
 @dataclass
 class EncodingConfig:
-    history: int = 32  # number of past observation frames stacked into the input tensor
+    history: int = (
+        128  # number of past observation frames stacked into the input tensor
+    )
     frame_channels: int = FRAME_CHANNELS
 
     @property
@@ -124,10 +126,10 @@ class TrainConfig:
     weight_broadcast_every: int = (
         20  # push fresh weights to actors every N learner steps
     )
-    # Batch prefetch: sample + collate the next batch (np.stack over all step
-    # observations + pin_memory -- the host cost that scales with history size)
-    # on a background thread so it overlaps the GPU step. Depth = max batches
-    # staged ahead; 0 disables (collate inline, pre-prefetch behavior).
+    # Batch prefetch: sample + collate the next batch (flatten + pin_memory of
+    # the deduplicated observations, see replay.py) on a background thread so it
+    # overlaps the GPU step. Depth = max batches staged ahead; 0 disables
+    # (collate inline, pre-prefetch behavior).
     prefetch_depth: int = 2
 
 

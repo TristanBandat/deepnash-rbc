@@ -132,12 +132,12 @@ def actor_loop(actor_id, init_sd, cfg: Config, traj_q, weight_q, stop_event,
 class BatchPrefetcher:
     """Stages the CPU half of the next learner step(s) on a background thread.
 
-    Sampling from the buffer and collating (np.stack over every step
-    observation + pin_memory) scale linearly with history size and used to sit
-    on the learner's critical path, idling the GPU. The thread overlaps them
-    with the current GPU step; the queue holds at most ``depth`` collated
-    batches, so a batch is sampled at most ``depth`` steps before it is
-    consumed -- negligible staleness next to the buffer's reuse window.
+    Sampling from the buffer and collating (flatten + pin_memory of the
+    deduplicated observations, see replay.py) used to sit on the learner's
+    critical path, idling the GPU. The thread overlaps them with the current
+    GPU step; the queue holds at most ``depth`` collated batches, so a batch is
+    sampled at most ``depth`` steps before it is consumed -- negligible
+    staleness next to the buffer's reuse window.
     """
 
     def __init__(self, learner: RNaDLearner, buffer: ReplayBuffer,

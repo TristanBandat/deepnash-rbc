@@ -55,12 +55,20 @@ SENSE_SIZE = 64
 class CollatedBatch:
     """CPU-side flattened batch: everything ``update_collated`` needs, built
     without touching the GPU so a prefetch thread can produce it while the
-    device runs the previous step. ``obs`` is uint8 and (on CUDA) pinned; the
-    transfer + float conversion happen in ``update_collated``."""
+    device runs the previous step.
+
+    Observations travel *deduplicated* (see replay.py): ``frames`` holds every
+    committed frame of the batch once (row 0 is the blank left-pad frame),
+    ``cur`` the per-step in-progress frame, and ``gather_idx`` maps each step to
+    the (history-1) committed rows of its stack. ``_to_device`` rebuilds the
+    full [N, history*F, 8, 8] input on the device -- ~history x less H2D traffic
+    than shipping prebuilt stacks. All uint8/int64 and (on CUDA) pinned."""
 
     trajectories: List[Trajectory]
     lengths: List[int]
-    obs: torch.Tensor            # [N, C, 8, 8] uint8, pinned when CUDA
+    cur: torch.Tensor            # [N, F, 8, 8] uint8, pinned when CUDA
+    frames: torch.Tensor         # [K, F, 8, 8] uint8, pinned when CUDA; row 0 = blank
+    gather_idx: torch.Tensor     # [N, history-1] int64 rows into ``frames``
     heads: torch.Tensor          # [N] int64 (CPU)
     actions: torch.Tensor        # [N] int64 (CPU)
     behavior_logp: torch.Tensor  # [N] float32 (CPU)
@@ -77,6 +85,7 @@ class RNaDLearner:
     ):
         self.cfg = cfg
         self.device = device
+        self.history = cfg.encoding.history  # stack depth for obs reconstruction
         self.net = net.to(device)
         self.reg_net = copy.deepcopy(net).to(device).eval()
         for p in self.reg_net.parameters():
@@ -159,17 +168,37 @@ class RNaDLearner:
 
     # -- batch flattening (shared; bit-identical values to the old inline build) --
     def collate(self, trajectories: List[Trajectory]) -> Optional[CollatedBatch]:
-        """CPU half of the batch build: flatten, np.stack all step observations
-        and pin the result. This is the part of a learner step whose cost scales
-        with history size, so async_train runs it on a prefetch thread."""
+        """CPU half of the batch build: flatten and pin the *deduplicated*
+        observations (each committed frame once + per-step in-progress frames,
+        see replay.py) plus the gather indices ``_to_device`` uses to rebuild
+        the full stacks on the device. Runs on the prefetch thread in async
+        mode; cost no longer scales with history size."""
         trajectories = [t for t in trajectories if len(t) > 0]
         if not trajectories:
             return None
         steps = [s for t in trajectories for s in t.steps]
-        obs_np = np.stack([s.obs for s in steps])                   # [N, C, 8, 8]
-        obs_t = torch.from_numpy(obs_np)
+        N = len(steps)
+        cur_np = np.stack([s.obs for s in steps])                   # [N, F, 8, 8]
+        committed = [f for t in trajectories for f in t.frames]
+        frames_np = np.zeros((1 + len(committed), *cur_np.shape[1:]), dtype=cur_np.dtype)
+        if committed:
+            frames_np[1:] = np.stack(committed)                     # row 0 stays blank
+        # global row of each trajectory's first committed frame (0 = blank pad)
+        starts = np.cumsum([1] + [len(t.frames) for t in trajectories[:-1]])
+        start_per_step = np.repeat(starts, [len(t) for t in trajectories])
+        turns = np.fromiter((s.turn for s in steps), dtype=np.int64, count=N)
+        # per step: the (history-1) committed frames preceding it, exactly the
+        # window ObservationEncoder.tensor() emits (blank-padded on the left)
+        rel = turns[:, None] + np.arange(-(self.history - 1), 0, dtype=np.int64)
+        gather_idx = np.where(rel < 0, 0, rel + start_per_step[:, None])
+
+        cur_t = torch.from_numpy(cur_np)
+        frames_t = torch.from_numpy(frames_np)
+        idx_t = torch.from_numpy(gather_idx)
         if self.device.type == "cuda":
-            obs_t = obs_t.pin_memory()
+            cur_t, frames_t, idx_t = (
+                x.pin_memory() for x in (cur_t, frames_t, idx_t)
+            )
         heads = torch.from_numpy(
             np.fromiter((s.head for s in steps), dtype=np.int64, count=len(steps))
         )
@@ -183,11 +212,20 @@ class RNaDLearner:
         legals = [s.legal for s in steps]                          # ragged, by global idx
         return CollatedBatch(
             trajectories, [len(t) for t in trajectories],
-            obs_t, heads, actions, behavior_logp, legals,
+            cur_t, frames_t, idx_t, heads, actions, behavior_logp, legals,
         )
 
     def _to_device(self, col: CollatedBatch):
-        obs = col.obs.to(self.device, non_blocking=True).float()
+        # rebuild the [N, history*F, 8, 8] stacks on-device: one gather over the
+        # deduplicated committed frames + the per-step in-progress frame. Values
+        # are bit-identical to stacking ObservationEncoder.tensor() per step.
+        cur = col.cur.to(self.device, non_blocking=True)           # [N, F, 8, 8]
+        frames = col.frames.to(self.device, non_blocking=True)     # [K, F, 8, 8]
+        idx = col.gather_idx.to(self.device, non_blocking=True)    # [N, H-1]
+        N = cur.shape[0]
+        hist = frames[idx.reshape(-1)].reshape(N, idx.shape[1], *cur.shape[1:])
+        obs = torch.cat([hist, cur.unsqueeze(1)], dim=1)           # [N, H, F, 8, 8]
+        obs = obs.reshape(N, -1, 8, 8).float()
         heads = col.heads.to(self.device)
         actions = col.actions.to(self.device)
         behavior_logp = col.behavior_logp.to(self.device)

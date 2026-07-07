@@ -98,7 +98,10 @@ class RNaDPlayer(Player):
     def handle_move_result(self, requested_move: Optional[chess.Move], taken_move: Optional[chess.Move],
                            captured_opponent_piece: bool, capture_square: Optional[int]):
         self.encoder.move_result(requested_move, taken_move, captured_opponent_piece, capture_square)
-        self.encoder.commit_turn()
+        # store each committed frame once per trajectory; steps reference it by
+        # turn index instead of carrying the full history stack (see replay.py)
+        committed = self.encoder.commit_turn()
+        self.trajectory.frames.append(committed.astype(np.uint8))
         if self.belief is not None:
             self.belief.apply_my_move(taken_move)
 
@@ -129,12 +132,14 @@ class RNaDPlayer(Player):
         return action, float(logp_all[action].item())
 
     def _record(self, head: int, legal: np.ndarray, action: int, logp: float):
-        # planes are all binary -> store as uint8 (4x smaller than float32 for the
-        # replay buffer and, crucially, for the actor->learner queue in async mode)
+        # planes are all binary -> store as uint8; only the in-progress frame is
+        # stored per step (the committed history is deduplicated on the
+        # trajectory and the stack rebuilt learner-side, see replay.py)
         self.trajectory.add(Step(
-            obs=self.encoder.tensor().astype(np.uint8),
+            obs=self.encoder.frame().astype(np.uint8),
             head=head,
             legal=legal,
             action=action,
             behavior_logprob=logp,
+            turn=len(self.trajectory.frames),
         ))
