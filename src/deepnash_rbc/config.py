@@ -124,6 +124,11 @@ class TrainConfig:
     weight_broadcast_every: int = (
         20  # push fresh weights to actors every N learner steps
     )
+    # Batch prefetch: sample + collate the next batch (np.stack over all step
+    # observations + pin_memory -- the host cost that scales with history size)
+    # on a background thread so it overlaps the GPU step. Depth = max batches
+    # staged ahead; 0 disables (collate inline, pre-prefetch behavior).
+    prefetch_depth: int = 2
 
 
 @dataclass

@@ -25,9 +25,10 @@ from __future__ import annotations
 import os
 import queue
 import sys
+import threading
 import time
 from dataclasses import asdict
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 import torch
@@ -47,7 +48,7 @@ from .eval import evaluate
 from .metrics import MetricsLogger, resume_metrics
 from .network import DeepNashNet
 from .replay import ReplayBuffer
-from .rnad.trainer import RNaDLearner
+from .rnad.trainer import CollatedBatch, RNaDLearner
 from .schedule import wait_until_allowed
 from .selfplay import play_one_game
 from .train import resolve_device
@@ -125,6 +126,55 @@ def actor_loop(actor_id, init_sd, cfg: Config, traj_q, weight_q, stop_event,
                 traj_q.put(traj, timeout=1.0)
             except queue.Full:
                 pass  # learner is behind -> drop (backpressure), keep playing
+
+
+# -- batch prefetch (learner-side thread) --------------------------------------
+class BatchPrefetcher:
+    """Stages the CPU half of the next learner step(s) on a background thread.
+
+    Sampling from the buffer and collating (np.stack over every step
+    observation + pin_memory) scale linearly with history size and used to sit
+    on the learner's critical path, idling the GPU. The thread overlaps them
+    with the current GPU step; the queue holds at most ``depth`` collated
+    batches, so a batch is sampled at most ``depth`` steps before it is
+    consumed -- negligible staleness next to the buffer's reuse window.
+    """
+
+    def __init__(self, learner: RNaDLearner, buffer: ReplayBuffer,
+                 batch_size: int, min_fill: int, depth: int):
+        self._learner = learner
+        self._buffer = buffer
+        self._batch_size = batch_size
+        self._min_fill = min_fill
+        self._q: "queue.Queue[CollatedBatch]" = queue.Queue(maxsize=depth)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._loop, name="batch-prefetch", daemon=True
+        )
+        self._thread.start()
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            if len(self._buffer) < self._min_fill:
+                time.sleep(0.05)  # warmup: don't collate tiny early batches
+                continue
+            col = self._learner.collate(self._buffer.sample(self._batch_size))
+            while not self._stop.is_set():
+                try:
+                    self._q.put(col, timeout=0.5)
+                    break
+                except queue.Full:
+                    continue
+
+    def get(self, timeout: float) -> Optional[CollatedBatch]:
+        try:
+            return self._q.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=3)
 
 
 # -- learner (main process) --------------------------------------------------
@@ -213,8 +263,15 @@ def run_async(cfg: Config | None = None) -> None:
         pause_event.clear()
         _broadcast()  # actors held stale weights while paused
 
+    prefetcher = (
+        BatchPrefetcher(learner, buffer, cfg.train.batch_trajectories,
+                        cfg.train.min_buffer_to_train, cfg.train.prefetch_depth)
+        if cfg.train.prefetch_depth > 0 else None
+    )
+
     n_params = sum(p.numel() for p in net.parameters())
-    print(f"[async] device={device} actors={n_actors} params={n_params:,}")
+    print(f"[async] device={device} actors={n_actors} params={n_params:,} "
+          f"prefetch_depth={cfg.train.prefetch_depth}")
 
     step = start_step
     last: Dict = {}
@@ -259,10 +316,14 @@ def run_async(cfg: Config | None = None) -> None:
                 time.sleep(0.05)
                 continue
 
-            # 3) one learner step
-            batch = buffer.sample(cfg.train.batch_trajectories)
-            if batch:
-                last = learner.update(batch)
+            # 3) one learner step (batch collated on the prefetch thread so the
+            #    np.stack/pin_memory host work overlapped the previous GPU step)
+            if prefetcher is not None:
+                stats = learner.update_collated(prefetcher.get(timeout=1.0))
+            else:
+                stats = learner.update(buffer.sample(cfg.train.batch_trajectories))
+            if stats:
+                last = stats
                 step = last["steps"]
                 metrics.log({"step": step, "type": "train", "drained": drained,
                              "games_seen": games_seen, "buffer": len(buffer), **last})
@@ -292,6 +353,8 @@ def run_async(cfg: Config | None = None) -> None:
                 last_log = time.time()
     finally:
         pbar.close()
+        if prefetcher is not None:
+            prefetcher.stop()
         stop_event.set()
         # terminate actors directly (they may be mid-game and not checking the
         # event); they are stateless self-play workers so this is safe.
