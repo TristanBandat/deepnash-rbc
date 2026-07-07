@@ -9,6 +9,7 @@ The R-NaD reward transform and v-trace operate over these per-player sequences.
 from __future__ import annotations
 
 import random
+import threading
 from dataclasses import dataclass, field
 from typing import List
 
@@ -43,22 +44,28 @@ class Trajectory:
 
 
 class ReplayBuffer:
+    """FIFO trajectory buffer. add/sample are locked so a prefetch thread can
+    sample while the main thread drains new trajectories in (async_train)."""
+
     def __init__(self, capacity: int):
         self.capacity = capacity
         self._buf: List[Trajectory] = []
+        self._lock = threading.Lock()
 
     def add(self, traj: Trajectory) -> None:
         if len(traj) == 0:
             return
-        self._buf.append(traj)
-        if len(self._buf) > self.capacity:
-            self._buf.pop(0)
+        with self._lock:
+            self._buf.append(traj)
+            if len(self._buf) > self.capacity:
+                self._buf.pop(0)
 
     def sample(self, n: int) -> List[Trajectory]:
-        if not self._buf:
-            return []
-        n = min(n, len(self._buf))
-        return random.sample(self._buf, n)
+        with self._lock:
+            if not self._buf:
+                return []
+            n = min(n, len(self._buf))
+            return random.sample(self._buf, n)
 
     def __len__(self) -> int:
         return len(self._buf)

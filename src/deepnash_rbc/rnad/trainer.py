@@ -34,7 +34,8 @@ bit-identical guarantee -- benchmark them on the GPU before trusting them.
 from __future__ import annotations
 
 import copy
-from typing import Dict, List, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -48,6 +49,22 @@ from .transform import transform_rewards
 from .vtrace import vtrace
 
 SENSE_SIZE = 64
+
+
+@dataclass
+class CollatedBatch:
+    """CPU-side flattened batch: everything ``update_collated`` needs, built
+    without touching the GPU so a prefetch thread can produce it while the
+    device runs the previous step. ``obs`` is uint8 and (on CUDA) pinned; the
+    transfer + float conversion happen in ``update_collated``."""
+
+    trajectories: List[Trajectory]
+    lengths: List[int]
+    obs: torch.Tensor            # [N, C, 8, 8] uint8, pinned when CUDA
+    heads: torch.Tensor          # [N] int64 (CPU)
+    actions: torch.Tensor        # [N] int64 (CPU)
+    behavior_logp: torch.Tensor  # [N] float32 (CPU)
+    legals: list                 # ragged, by global step index
 
 
 class RNaDLearner:
@@ -89,13 +106,15 @@ class RNaDLearner:
 
     # -- one learner step over a batch of trajectories -----------------------
     def update(self, trajectories: List[Trajectory]) -> dict:
-        trajectories = [t for t in trajectories if len(t) > 0]
-        if not trajectories:
+        return self.update_collated(self.collate(trajectories))
+
+    def update_collated(self, col: Optional[CollatedBatch]) -> dict:
+        if col is None:
             return {}
         self.net.train()
 
-        lengths = [len(t) for t in trajectories]
-        obs, heads, actions, behavior_logp, legals = self._build_batch(trajectories)
+        trajectories, lengths = col.trajectories, col.lengths
+        obs, heads, actions, behavior_logp, legals = self._to_device(col)
 
         amp_ctx = (
             torch.autocast(device_type=self.device.type, dtype=torch.bfloat16)
@@ -139,25 +158,40 @@ class RNaDLearner:
         )
 
     # -- batch flattening (shared; bit-identical values to the old inline build) --
-    def _build_batch(self, trajectories):
+    def collate(self, trajectories: List[Trajectory]) -> Optional[CollatedBatch]:
+        """CPU half of the batch build: flatten, np.stack all step observations
+        and pin the result. This is the part of a learner step whose cost scales
+        with history size, so async_train runs it on a prefetch thread."""
+        trajectories = [t for t in trajectories if len(t) > 0]
+        if not trajectories:
+            return None
         steps = [s for t in trajectories for s in t.steps]
         obs_np = np.stack([s.obs for s in steps])                   # [N, C, 8, 8]
         obs_t = torch.from_numpy(obs_np)
         if self.device.type == "cuda":
             obs_t = obs_t.pin_memory()
-        obs = obs_t.to(self.device, non_blocking=True).float()
         heads = torch.from_numpy(
             np.fromiter((s.head for s in steps), dtype=np.int64, count=len(steps))
-        ).to(self.device)
+        )
         actions = torch.from_numpy(
             np.fromiter((s.action for s in steps), dtype=np.int64, count=len(steps))
-        ).to(self.device)
+        )
         behavior_logp = torch.from_numpy(
             np.fromiter((s.behavior_logprob for s in steps),
                         dtype=np.float32, count=len(steps))
-        ).to(self.device)
+        )
         legals = [s.legal for s in steps]                          # ragged, by global idx
-        return obs, heads, actions, behavior_logp, legals
+        return CollatedBatch(
+            trajectories, [len(t) for t in trajectories],
+            obs_t, heads, actions, behavior_logp, legals,
+        )
+
+    def _to_device(self, col: CollatedBatch):
+        obs = col.obs.to(self.device, non_blocking=True).float()
+        heads = col.heads.to(self.device)
+        actions = col.actions.to(self.device)
+        behavior_logp = col.behavior_logp.to(self.device)
+        return obs, heads, actions, behavior_logp, col.legals
 
     # -- losses + optimizer step (shared by both paths) ----------------------
     def _losses_and_step(self, value, vs_g, adv_g, taken_logit, entropy, head_data) -> dict:
