@@ -1,0 +1,98 @@
+{
+  "defaults": {
+    "encoding.history": 16,
+    "network.channels": 128,
+    "network.blocks": 6,
+    "network.value_hidden": 128,
+    "rnad.eta": 0.2,
+    "rnad.iteration_steps": 1000,
+    "rnad.gamma": 1.0,
+    "rnad.rho_clip": 1.0,
+    "rnad.c_clip": 1.0,
+    "rnad.neurd_clip": 2.5,
+    "rnad.value_coef": 1.0,
+    "rnad.full_action_neurd": true,
+    "rnad.lr": 5e-05,
+    "rnad.grad_clip": 10.0,
+    "rnad.fast_learner": true,
+    "rnad.compile_net": false,
+    "rnad.amp": true,
+    "train.games_per_iter": 8,
+    "train.learner_steps_per_iter": 4,
+    "train.total_iters": 80000,
+    "train.batch_trajectories": 32,
+    "train.buffer_capacity": 4096,
+    "train.num_actors": 1,
+    "train.device": "cuda",
+    "train.seconds_per_player": 900.0,
+    "train.checkpoint_every": 10000,
+    "train.seed": 0,
+    "train.eval_every": 0,
+    "train.eval_games": 50,
+    "train.eval_opponents": [
+      "random",
+      "attacker",
+      "trout"
+    ],
+    "train.progress": true,
+    "train.idle_schedule": true,
+    "train.train_start_hour": 19,
+    "train.train_stop_hour": 8,
+    "train.train_days": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "train.async_actors": 16,
+    "train.traj_queue_size": 256,
+    "train.min_buffer_to_train": 64,
+    "train.drain_per_cycle": 64,
+    "train.weight_broadcast_every": 20,
+    "train.prefetch_depth": 2
+  },
+  "runs": [
+    {
+      "name": "stability-eta-0.3",
+      "bump": "minor",
+      "overrides": {
+        "rnad.eta": 0.3
+      }
+    },
+    {
+      "name": "stability-eta-0.5",
+      "bump": "minor",
+      "overrides": {
+        "rnad.eta": 0.5
+      }
+    },
+    {
+      "name": "stability-anchor-500",
+      "bump": "minor",
+      "overrides": {
+        "rnad.iteration_steps": 500
+      }
+    },
+    {
+      "name": "stability-anchor-2000",
+      "bump": "minor",
+      "overrides": {
+        "rnad.iteration_steps": 2000
+      }
+    }
+  ],
+  "tournament": {
+    "pair_games": 8,
+    "baselines": [
+      "random",
+      "trout",
+      "mht"
+    ],
+    "incumbents": 5,
+    "keep_top": 2,
+    "workers": 8,
+    "threshold": 0.05,
+    "out": "results/tournament.jsonl"
+  }
+}
