@@ -9,6 +9,9 @@ runs/
 **/*.lock
 **/*.jsonl
 **/*.pt
+# tournament state must travel between dev and training server (sweep gauntlets
+# read/append it); metrics jsonl and checkpoints stay machine-local
+!results/tournament.jsonl
 
 
 # RBC server credentials (scripts/rc_connect.py)
