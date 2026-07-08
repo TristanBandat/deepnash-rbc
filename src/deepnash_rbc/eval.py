@@ -10,7 +10,8 @@ Baselines:
   random   -- RandomBot: random legal sense + move. The floor; should be crushed
               quickly once anything is learned.
   attacker -- AttackerBot: makes a beeline for the king. Weak but not trivial.
-  trout    -- TroutBot: Stockfish-backed. Used whenever a Stockfish binary can be
+  trout    -- TroutBot: Stockfish-backed, explicitly pinned to UCI Skill Level 20
+              (maximum strength). Used whenever a Stockfish binary can be
               resolved -- STOCKFISH_EXECUTABLE, `stockfish` on PATH, or the copy
               bundled in tools/stockfish/ -- which is then exported as
               STOCKFISH_EXECUTABLE so reconchess's TroutBot picks it up.
@@ -31,7 +32,6 @@ Both need Stockfish.
 from __future__ import annotations
 
 import os
-import random
 from typing import Dict, List
 
 import chess
@@ -58,34 +58,81 @@ def _ensure_stockfish() -> str | None:
 
 
 def _make_trout():
-    """Build a TroutBot that never hands Stockfish an illegal position.
+    """Build the default TroutBot opponent, explicitly at maximum strength.
 
-    RBC belief boards are frequently illegal as standard chess (missing enemy
-    king, side-not-to-move left in check, ...). Stockfish does not validate its
-    input and *segfaults* on many such positions, killing the engine mid-eval.
-    reconchess's TroutBot only guards the king-capture case, so we subclass it to
-    add the same ``board.is_valid()`` gate that StockfishAnalyst already relies on
-    (see analysis/engine.py); on an illegal board we fall back to a random legal
-    move instead of feeding it to the engine."""
-    from reconchess.bots.trout_bot import TroutBot
+    We reuse ``TunableTroutBot`` (analysis/ladder.py) pinned to UCI Skill Level 20
+    so the headline "vs trout" stats are always measured against a full-strength
+    engine -- configured explicitly rather than trusting Stockfish's default.
+    TunableTroutBot also hardens stock TroutBot for RBC: belief boards are
+    frequently illegal as standard chess (missing enemy king, side-not-to-move
+    left in check, ...) and Stockfish *segfaults* on many such positions, so it
+    gates every engine query behind ``board.is_valid()`` (falling back to a
+    random legal move) and revives a dead engine mid-game instead of silently
+    passing for the rest of the game."""
+    _ensure_stockfish()
+    from .analysis.ladder import TunableTroutBot
 
-    class SafeTroutBot(TroutBot):
+    return TunableTroutBot(skill_level=20)
+
+
+def _make_mht():
+    """Build reconchess_tools' MhtBot, hardened the same way as trout.
+
+    Stock MhtBot has two fatal failure modes, both rooted in MHT hypothesis
+    boards (its ``vote()`` grades every hypothesis with Stockfish):
+
+      * a hypothesis in which one of our earlier captures happened to take the
+        enemy king is kept by the tracker (only the capture *square* is checked),
+        so ``board.king()`` returns None and ``board.attackers(..., None)``
+        raises ``TypeError: list indices must be integers ...``, aborting the game;
+      * hypotheses that are illegal as standard chess without being
+        opponent-in-check (e.g. impossible check configurations RBC produces)
+        reach ``engine.analyse`` unguarded; Stockfish segfaults on them
+        (exit code -11) and MhtBot never restarts its engine.
+
+    We prune such boards before each move -- keeping otherwise-invalid boards on
+    which the enemy king is capturable, since ``vote()`` resolves those without
+    consulting the engine -- and revive a dead engine instead of aborting.
+    Dropping hypotheses is already MhtBot policy (it truncates to 3000 boards)."""
+    import random
+
+    import chess.engine
+
+    _ensure_stockfish()  # reconchess_tools.stockfish reads the env var at import
+    from reconchess_tools.example_bot.bot import MhtBot
+    from reconchess_tools.stockfish import create_engine
+
+    class SafeMhtBot(MhtBot):
+        @staticmethod
+        def _usable(board: chess.Board) -> bool:
+            enemy_king = board.king(not board.turn)
+            if enemy_king is None or board.king(board.turn) is None:
+                return False
+            if board.attackers(board.turn, enemy_king):
+                return True  # king-capture branch: vote() never queries the engine
+            return board.is_valid()
+
+        def _revive_engine(self) -> None:
+            try:
+                self.engine.close()
+            except Exception:
+                pass
+            self.engine = create_engine()
+
         def choose_move(self, move_actions, seconds_left):
-            # keep reconchess's king-capture shortcut
-            enemy_king = self.board.king(not self.color)
-            if enemy_king:
-                attackers = self.board.attackers(self.color, enemy_king)
-                if attackers:
-                    return chess.Move(attackers.pop(), enemy_king)
-            # TroutBot sets turn/clear_stack right before engine.play; mirror that
-            # so is_valid() checks the exact position we'd otherwise send.
-            self.board.turn = self.color
-            self.board.clear_stack()
-            if not self.board.is_valid():
-                return random.choice(move_actions) if move_actions else None
-            return super().choose_move(move_actions, seconds_left)
+            self.mht.boards = [b for b in self.mht.boards if self._usable(b)]
+            for attempt in (1, 2):  # one retry after reviving a dead engine
+                try:
+                    return super().choose_move(move_actions, seconds_left)
+                except chess.engine.EngineTerminatedError:
+                    if attempt == 1:
+                        self._revive_engine()
+                        continue
+                except chess.engine.EngineError:
+                    break  # bad position state -> fall through to a safe move
+            return random.choice(move_actions) if move_actions else None
 
-    return SafeTroutBot()
+    return SafeMhtBot()
 
 
 # Opponents that need a Stockfish binary; skipped in evaluate() when none is found.
@@ -156,10 +203,7 @@ def _make_opponent(name: str):
     if name == "trout":
         return _make_trout()
     if name == "mht":
-        _ensure_stockfish()  # reconchess_tools.stockfish reads the env var at import
-        from reconchess_tools.example_bot.bot import MhtBot
-
-        return MhtBot()
+        return _make_mht()
     if name == "strangefish2":
         return _make_strangefish2()
     raise ValueError(f"unknown opponent: {name}")
