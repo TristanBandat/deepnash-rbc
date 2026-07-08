@@ -1,0 +1,26 @@
+Loaded checkpoints/v0.12.0/deepnash_async_v0.12.0_80000.pt (history=256); engine=/home/tristan/Dropbox/JKU/Semester_14/02_thesis/deepnash-rbc/tools/stockfish/stockfish-ubuntu-x86-64-bmi2; device=cuda; workers=8
+
+=== Move quality & win-rate (vs ground-truth board) ===
+
+=== vs trout  (n=100  W/D/L=93/0/7  win=0.93  draw=0.0) ===
+            ACPL  blunder%   top1%  scored  no-eval
+white      201.5     35.4%    3.5%     229       53
+black      265.5     41.6%    3.5%     197       56
+overall    231.1     38.3%    3.5%     426      109
+  Information cost (centipawns, higher = imperfect info hurt more):
+    A  taken move: true board vs naive-belief board   -2.2 cp  (n=413, proxy belief)
+    B  on true board: taken vs requested move         +0.0 cp  (n=362, truncation cost)
+    truncated moves (requested != taken): 71/535
+
+=== vs mht  (n=100  W/D/L=33/0/67  win=0.33  draw=0.0) ===
+            ACPL  blunder%   top1%  scored  no-eval
+white      134.1     18.2%    2.9%     280       53
+black      162.0     27.0%   15.6%     334       52
+overall    149.3     23.0%    9.8%     614      105
+  Information cost (centipawns, higher = imperfect info hurt more):
+    A  taken move: true board vs naive-belief board   -3.6 cp  (n=609, proxy belief)
+    B  on true board: taken vs requested move         +0.0 cp  (n=539, truncation cost)
+    truncated moves (requested != taken): 93/719
+
+=== Strength ladder (win-rate vs TroutBot @ Skill Level) ===
+[ladder] skill=20  win=0.89  draw=0.0  (n=100)
