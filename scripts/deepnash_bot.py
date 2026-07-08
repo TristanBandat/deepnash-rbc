@@ -19,6 +19,11 @@ the config for one-off experiments:
     DEEPNASH_GREEDY  set to 1 to play argmax instead of sampling from the
                      policy (default: sample -- the RNaD policy is a mixed
                      strategy, sampling is the intended way to play it)
+    DEEPNASH_SAMPLE_THRESHOLD
+                     overrides "sample_threshold" from the config: when
+                     sampling, actions with probability below this are dropped
+                     and the rest renormalized (DeepNash-style truncated
+                     sampling). 0.0 = raw policy.
 
 With neither set, falls back to the highest step of the newest version under
 checkpoints/, and cuda if available.
@@ -78,9 +83,13 @@ class DeepNashBot(RNaDPlayer):
         net, enc = load_net(str(ckpt), device)
         greedy = os.environ.get("DEEPNASH_GREEDY", "").lower() in ("1", "true", "yes")
         sample = not (greedy or ("DEEPNASH_GREEDY" not in os.environ and cfg.get("greedy")))
+        threshold = float(
+            os.environ.get("DEEPNASH_SAMPLE_THRESHOLD", cfg.get("sample_threshold", 0.0) or 0.0)
+        )
         print(f"[deepnash_bot] checkpoint={ckpt.name} device={device} "
-              f"history={enc.history} sample={sample}", flush=True)
-        super().__init__(net, device, history=enc.history, sample=sample)
+              f"history={enc.history} sample={sample} threshold={threshold}", flush=True)
+        super().__init__(net, device, history=enc.history, sample=sample,
+                         sample_threshold=threshold)
 
 
 def get_player():
