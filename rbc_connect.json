@@ -1,0 +1,9 @@
+{
+  "checkpoint": "checkpoints/v0.12.0/deepnash_async_v0.12.0_80000.pt",
+  "device": null,
+  "greedy": false,
+  "server_url": "https://rbc.jhuapl.edu",
+  "ranked": false,
+  "keep_version": true,
+  "max_concurrent_games": 16
+}
