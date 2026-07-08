@@ -10,3 +10,6 @@ runs/
 **/*.jsonl
 **/*.pt
 
+
+# RBC server credentials (scripts/rc_connect.py)
+.env
