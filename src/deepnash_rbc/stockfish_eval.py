@@ -11,21 +11,23 @@ Two analyses, both driven by a Stockfish binary (set STOCKFISH_EXECUTABLE or put
      reporting win/draw/loss (from those same games) and the move-quality table, so
      the opponent drives every number, not just the grading.
 
-  2. STRENGTH LADDER -- play the agent vs TroutBot at a sweep of UCI Skill
-     Levels and report win-rate per level, a cheap strength curve.
+  2. STRENGTH LADDER (opt-in via --ladder) -- play the agent vs TroutBot at a
+     sweep of UCI Skill Levels and report win-rate per level, a cheap strength
+     curve.
 
 Usage:
   uv run deepnash-stockfish-eval --checkpoint checkpoints/latest.pt
   uv run deepnash-stockfish-eval -c ckpt.pt --num-games 20 --mq-opponent mht strangefish2 \
-      --ladder-levels 15,20 --json report.json
+      --ladder --ladder-levels 15,20 --json report.json
 
 Games are independent and played across a process pool (-j / --workers, default
 auto). Each worker loads its own net on --device and its own Stockfish (spawn start
 method), so grading happens in-worker and only small results cross the boundary.
 
-Defaults: device cuda; move-quality opponents trout/mht (strangefish2 opt-in); ladder at
-Skill Level 20 only; --num-games (default 10) drives both the per-opponent and
-per-ladder-level game counts unless --mq-games / --ladder-games override it.
+Defaults: device cuda; move-quality opponents trout/mht (strangefish2 opt-in); ladder
+off unless --ladder is given (then Skill Level 20 only unless --ladder-levels sweeps);
+--num-games (default 10) drives both the per-opponent and per-ladder-level game
+counts unless --mq-games / --ladder-games override it.
 """
 
 from __future__ import annotations
@@ -262,8 +264,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-belief", dest="belief", action="store_false",
                    help="skip the constructed-belief cost (analysis A)")
     # ladder
+    p.add_argument("--ladder", action="store_true",
+                   help="run the strength ladder vs TroutBot (off by default)")
     p.add_argument("--ladder-levels", default=None,
-                   help="comma-separated UCI Skill Levels, e.g. 0,5,10,20 (default: 20 only; empty to skip)")
+                   help="comma-separated UCI Skill Levels for --ladder, e.g. 0,5,10,20 "
+                        "(default: 20 only)")
     p.add_argument("--ladder-games", type=int, default=None,
                    help="override --num-games for the ladder")
     # output
@@ -279,9 +284,7 @@ def main() -> None:
     if args.ladder_games is None:
         args.ladder_games = args.num_games
     if args.ladder_levels is None:
-        args.ladder_levels = [20]  # full strength only unless a sweep is given
-    elif args.ladder_levels.strip() == "":
-        args.ladder_levels = []
+        args.ladder_levels = [20]  # max strength only unless a sweep is given
     else:
         args.ladder_levels = [int(x) for x in args.ladder_levels.split(",") if x.strip()]
 
@@ -315,7 +318,7 @@ def main() -> None:
         print("\n=== Move quality & win-rate (vs ground-truth board) ===")
         _print_move_quality(mq)
 
-    if args.ladder_levels:
+    if args.ladder and args.ladder_levels:
         print("\n=== Strength ladder (win-rate vs TroutBot @ Skill Level) ===")
         report["ladder"] = run_ladder(args)
 
