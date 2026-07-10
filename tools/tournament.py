@@ -115,7 +115,7 @@ def _play_game(task):
     from reconchess import LocalGame, play_local_game
 
     white_name, black_name, seconds = task
-    row = {"white": white_name, "black": black_name}
+    row = {"white": white_name, "black": black_name, "ts": round(time.time(), 1)}
     try:
         white = _make_player(white_name)
         black = _make_player(black_name)
@@ -129,6 +129,7 @@ def _play_game(task):
     else:
         row["winner"] = "white" if winner == chess.WHITE else "black"
     row["reason"] = str(reason)
+    row["turns"] = hist.num_turns()
     return row
 
 
