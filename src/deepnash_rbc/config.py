@@ -104,18 +104,20 @@ class TrainConfig:
     # when stdout isn't a TTY so it doesn't spam redirected logs). --no-progress
     # turns it off entirely.
     progress: bool = True
-    # --- nightly idle schedule (sound / electricity) ---
-    # When idle_schedule is True, training only runs inside the recurring window
-    # [train_start_hour, train_stop_hour) on the listed weekdays (local time);
-    # outside it the learner sleeps and the async actors are paused so the rig is
-    # quiet and draws little power. The window may wrap midnight (start > stop):
-    # the default 19:00->06:00 on Mon-Fri means "train on weekday nights" (Friday
-    # night runs into Saturday 06:00, then the weekend idles). Hour granularity.
+    # --- idle schedule (sound / electricity) ---
+    # When idle_schedule is True, training pauses during working hours on the
+    # listed WORKING days (local time): on those days it only runs inside
+    # [train_start_hour, train_stop_hour), which may wrap midnight (start > stop).
+    # Days not listed have no working hours, so training runs around the clock.
+    # The default 19:00->06:00 on Mon-Fri means "quiet during weekday working
+    # hours": weekday nights and the whole weekend train. While idle the learner
+    # sleeps and the async actors are paused so the rig is quiet and draws little
+    # power. Hour granularity.
     # Override for a one-off run without editing this file: DEEPNASH_IGNORE_IDLE=1.
     idle_schedule: bool = True
     train_start_hour: int = 19  # window opens (training resumes) at 19:00
-    train_stop_hour: int = 8  # window closes (training pauses) at 06:00
-    train_days: tuple = (0, 1, 2, 3, 4)  # nights starting Mon-Fri (Mon=0 .. Sun=6)
+    train_stop_hour: int = 6  # window closes (training pauses) at 06:00
+    train_days: tuple = (0, 1, 2, 3, 4)  # working days Mon-Fri (Mon=0 .. Sun=6)
     # --- async actor/learner (deepnash-train-async) ---
     # In async mode, eval_every / checkpoint_every / total_iters count LEARNER
     # STEPS, not outer iterations.

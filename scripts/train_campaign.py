@@ -67,9 +67,9 @@ ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = ROOT / "pyproject.toml"
 CHECKPOINTS = ROOT / "checkpoints"
 
-# Set True to run the whole campaign back-to-back ignoring the nightly idle
-# window (exports DEEPNASH_IGNORE_IDLE=1 to every run). Leave False to honour the
-# schedule in config.
+# Default for --ignore-idle / --honour-idle: True runs the whole campaign
+# back-to-back ignoring the idle window (exports DEEPNASH_IGNORE_IDLE=1 to every
+# run), False honours the schedule in config.
 IGNORE_IDLE = True
 
 # --- legacy inline campaign (used when --sweep is not given) -------------------
@@ -258,6 +258,12 @@ def main() -> None:
                          "and their defaults, then exit")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the plan, run nothing")
+    idle = ap.add_mutually_exclusive_group()
+    idle.add_argument("--ignore-idle", dest="ignore_idle", action="store_true",
+                      default=IGNORE_IDLE,
+                      help="run back-to-back 24/7, ignoring the idle schedule")
+    idle.add_argument("--honour-idle", dest="ignore_idle", action="store_false",
+                      help="pause during the quiet hours configured in config")
     args = ap.parse_args()
 
     if args.write_template:
@@ -286,8 +292,10 @@ def main() -> None:
         return
 
     env = os.environ.copy()
-    if IGNORE_IDLE:
+    if args.ignore_idle:
         env["DEEPNASH_IGNORE_IDLE"] = "1"
+    print(f"[campaign] idle schedule: "
+          f"{'ignored (24/7)' if args.ignore_idle else 'honoured'}")
     for i, (version, name, run_args) in enumerate(plan, 1):
         write_version(version)  # what get_version() reads in the subprocess
         cmd = ["uv", "run", "deepnash-train-async", *run_args]
