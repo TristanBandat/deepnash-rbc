@@ -37,7 +37,7 @@
     "train.progress": true,
     "train.idle_schedule": true,
     "train.train_start_hour": 19,
-    "train.train_stop_hour": 8,
+    "train.train_stop_hour": 6,
     "train.train_days": [
       0,
       1,

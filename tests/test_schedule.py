@@ -17,7 +17,8 @@ def _cfg(**over):
     return cfg
 
 
-# Default window: 19:00 -> 06:00, nights starting Mon-Fri (Mon=0).
+# Default: quiet 06:00 -> 19:00 on working days Mon-Fri (Mon=0); nights and the
+# whole weekend train.
 # 2024-01-01 is a Monday, so weekday() maps cleanly onto that week.
 MON, TUE, WED, THU, FRI, SAT, SUN = (datetime(2024, 1, d) for d in range(1, 8))
 
@@ -26,14 +27,16 @@ MON, TUE, WED, THU, FRI, SAT, SUN = (datetime(2024, 1, d) for d in range(1, 8))
     "when, allowed",
     [
         (MON.replace(hour=20), True),    # Mon evening -> train
-        (MON.replace(hour=10), False),   # Mon daytime -> idle
-        (TUE.replace(hour=2), True),     # Tue early AM = Mon-night tail -> train
+        (MON.replace(hour=10), False),   # Mon working hours -> idle
+        (MON.replace(hour=2), True),     # Mon early AM (before work) -> train
+        (TUE.replace(hour=2), True),     # Tue early AM -> train
         (TUE.replace(hour=6), False),    # exactly 06:00 -> stop
         (FRI.replace(hour=23), True),    # Fri night -> train
-        (SAT.replace(hour=2), True),     # Sat early AM = Fri-night tail -> train
-        (SAT.replace(hour=20), False),   # Sat evening -> idle (weekend)
-        (SUN.replace(hour=2), False),    # Sun early AM -> idle (no Sat-night run)
-        (SUN.replace(hour=23), False),   # Sun night -> idle
+        (SAT.replace(hour=2), True),     # Sat early AM -> train
+        (SAT.replace(hour=12), True),    # Sat daytime -> train (no working hours)
+        (SAT.replace(hour=20), True),    # Sat evening -> train
+        (SUN.replace(hour=2), True),     # Sun early AM -> train
+        (SUN.replace(hour=23), True),    # Sun night -> train
     ],
 )
 def test_default_window(when, allowed):
@@ -51,12 +54,12 @@ def test_master_switch_and_override(monkeypatch):
 
 
 def test_same_day_window():
-    # non-wrapping window 9->17 on weekdays
+    # non-wrapping window 9->17 on working days; unlisted days are unrestricted
     cfg = _cfg(train_start_hour=9, train_stop_hour=17)
     assert training_allowed(cfg, MON.replace(hour=12)) is True
     assert training_allowed(cfg, MON.replace(hour=8)) is False
     assert training_allowed(cfg, MON.replace(hour=17)) is False
-    assert training_allowed(cfg, SAT.replace(hour=12)) is False
+    assert training_allowed(cfg, SAT.replace(hour=12)) is True
 
 
 def test_next_window_start_from_daytime():
