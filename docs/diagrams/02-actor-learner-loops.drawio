@@ -1,0 +1,194 @@
+<mxfile host="app.diagrams.net" modified="2026-07-07T00:00:00.000Z" agent="claude-code" version="24.0.0">
+  <diagram id="async-loops" name="actor-learner-loops">
+    <mxGraphModel dx="1250" dy="980" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1250" pageHeight="980" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="tA" value="Actor process (&#215;16, CPU)" style="text;html=1;align=center;verticalAlign=middle;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="90" y="10" width="240" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="tL" value="Learner (main process, GPU)" style="text;html=1;align=center;verticalAlign=middle;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="600" y="10" width="280" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ================= actor loop ================= -->
+        <mxCell id="aStart" value="actor_loop&#160;&#160;(one per actor)" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="90" y="60" width="240" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="aD1" value="pause_event set?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="120" y="150" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="aSleep" value="sleep 1 s" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="370" y="170" width="130" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="aP1" value="pull newest &#952; from weight queue (if any) and load into local net" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="80" y="290" width="260" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="aP2" value="play one self-play game&lt;br&gt;&#8594; 2 trajectories" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="80" y="390" width="260" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="aP3" value="put each trajectory into the trajectory queue (timeout 1 s; drop if full)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="80" y="480" width="260" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="aNote" value="loops until stop_event; actors are terminated by the learner at shutdown" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontStyle=2;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="80" y="580" width="280" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ae1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="aStart" target="aD1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ae2" value="yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="aD1" target="aSleep">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ae3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0.5;exitY=0;entryX=0.75;entryY=0;" edge="1" parent="1" source="aSleep" target="aD1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="435" y="130" />
+              <mxPoint x="255" y="130" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ae4" value="no" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="aD1" target="aP1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ae5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="aP1" target="aP2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ae6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="aP2" target="aP3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ae7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="aP3" target="aD1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="40" y="515" />
+              <mxPoint x="40" y="190" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ================= learner loop ================= -->
+        <mxCell id="lStart" value="run_async&#160;&#160;(main process)" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="600" y="50" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="lInit" value="initialize: net &#952; on GPU, R-NaD learner, replay buffer; optional resume; spawn 16 actors" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="600" y="120" width="280" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="lD0" value="inside training window?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="630" y="230" width="220" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="lIdle" value="idle: pause actors, pre-idle checkpoint, sleep until window opens; then broadcast &#952;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="940" y="235" width="240" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="lP1" value="drain &#8804; 64 trajectories from queue into replay buffer" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="600" y="350" width="280" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="lD2" value="len(buffer) &#8805; 64 ?&lt;br&gt;(warm-up gate)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="630" y="430" width="220" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="lSleep" value="sleep 50 ms&lt;br&gt;(deadlock detection: actors alive?)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="940" y="445" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="lP3" value="sample 32 trajectories &#8594; one R-NaD update; step &#8592; learner steps" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="600" y="550" width="280" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="lP4" value="step &#8801; 0 (mod 20): broadcast &#952; to actors" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="600" y="640" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="lP5" value="step &#8801; 0 (mod eval_every): skill eval" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="600" y="710" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="lP6" value="step &#8801; 0 (mod 10 000): save checkpoint" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="600" y="780" width="280" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="lD3" value="step &#160;&lt; 80 000 ?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="630" y="850" width="220" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="lEnd" value="shutdown: stop_event, terminate actors" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="940" y="870" width="240" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="le1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="lStart" target="lInit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="le2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="lInit" target="lD0">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="le3" value="no" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="lD0" target="lIdle">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="le4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0.5;exitY=0;entryX=0.75;entryY=0;" edge="1" parent="1" source="lIdle" target="lD0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1060" y="205" />
+              <mxPoint x="795" y="205" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="le5" value="yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="lD0" target="lP1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="le6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="lP1" target="lD2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="le7" value="no" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="lD2" target="lSleep">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="le8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=1;exitY=0.5;entryX=0.25;entryY=0;" edge="1" parent="1" source="lSleep" target="lD0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1220" y="475" />
+              <mxPoint x="1220" y="195" />
+              <mxPoint x="685" y="195" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="le9" value="yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="lD2" target="lP3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="le10" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="lP3" target="lP4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="le11" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="lP4" target="lP5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="le12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="lP5" target="lP6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="le13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="lP6" target="lD3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="le14" value="no" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="lD3" target="lEnd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="le15" value="yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="lD3" target="lD0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="545" y="890" />
+              <mxPoint x="545" y="270" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- coupling between the two loops -->
+        <mxCell id="ce1" value="trajectory queue (maxsize 256)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;fontSize=10;fontColor=#666666;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="aP3" target="lP1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="430" y="515" />
+              <mxPoint x="430" y="375" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ce2" value="weight queues (maxsize 1)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;fontSize=10;fontColor=#666666;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" edge="1" parent="1" source="lP4" target="aP1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="470" y="660" />
+              <mxPoint x="470" y="320" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
