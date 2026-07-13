@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 .claude/
+**/__marimo__/
 
 # TensorBoard runs (regenerate from metrics JSONL via notebooks/metrics_to_tensorboard.py)
 runs/
@@ -16,3 +17,7 @@ runs/
 
 # RBC server credentials (scripts/rc_connect.py)
 .env
+
+# Drawio
+**/*.bkp
+
