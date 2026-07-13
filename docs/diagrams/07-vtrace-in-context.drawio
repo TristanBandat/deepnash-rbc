@@ -1,0 +1,81 @@
+<mxfile host="Electron" agent="claude-code">
+  <diagram id="vtrace-context" name="vtrace-in-context">
+    <mxGraphModel dx="1352" dy="715" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;" value="V-trace in the overall training loop — why off-policy correction is needed and what it feeds (stage 2 of diagram 03)" vertex="1">
+          <mxGeometry height="30" width="1100" x="40" y="15" as="geometry" />
+        </mxCell>
+        <mxCell id="frameA" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#000000;dashed=1;verticalAlign=top;align=left;fontStyle=1;fontSize=12;spacingLeft=8;spacingTop=4;" value="(A) why the data is off-policy — the μ / π gap" vertex="1">
+          <mxGeometry height="490" width="640" x="40" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="actors" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="16 async actor processes&lt;br&gt;self-play with a weight SNAPSHOT&lt;br&gt;→ behavior policy μ" vertex="1">
+          <mxGeometry height="70" width="260" x="70" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="rec" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="every decision step stores&lt;br&gt;behavior log μ(a|s)&lt;br&gt;(Step.behavior_logprob)" vertex="1">
+          <mxGeometry height="70" width="260" x="70" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="buffer" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="FIFO replay buffer&lt;br&gt;(4096 trajectories)" vertex="1">
+          <mxGeometry height="90" width="170" x="70" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="forward" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;" value="learner forward pass with CURRENT θ&lt;br&gt;→ log π(a|s), value V(s)&lt;br&gt;(+ log π_reg from the frozen net)" vertex="1">
+          <mxGeometry height="90" width="260" x="390" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="lagNote" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontStyle=2;fontColor=#333333;" value="three lag sources between μ and π:&lt;br&gt;1. weights reach actors only every&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;20 learner steps&lt;br&gt;2. a game ends long after it started&lt;br&gt;3. buffer reuse — each trajectory is&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;sampled ≈4× during its ≈550-step&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;lifetime, on average ≈280 steps old&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;(v0.8.0 throughput)" vertex="1">
+          <mxGeometry height="190" width="270" x="390" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="gapNote" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontStyle=2;fontColor=#333333;" value="the network that GENERATED an action (μ) and the network being TRAINED (π) differ —&lt;br&gt;naive targets from this data would estimate V^μ, the value of an outdated policy" vertex="1">
+          <mxGeometry height="60" width="580" x="70" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="rt" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="R-NaD reward transform (stage 1, diagram 03)&lt;br&gt;r̃_t = r_t − η·(log π − log π_reg), sparse terminal z" vertex="1">
+          <mxGeometry height="70" width="320" x="730" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="vt" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" value="V-TRACE — off-policy correction (per trajectory, detached)&lt;br&gt;&lt;br&gt;re-weights every TD error by how plausible the stored action is under the CURRENT policy: importance ratio ρ_t = π(a_t|s_t)/μ(a_t|s_t), clipped at 1 → targets follow π, not μ" vertex="1">
+          <mxGeometry height="130" width="320" x="730" y="300" as="geometry" />
+        </mxCell>
+        <mxCell id="lossV" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;" value="value loss&lt;br&gt;MSE(v_θ(s), vs)" vertex="1">
+          <mxGeometry height="70" width="240" x="1120" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="lossP" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;" value="NeuRD policy loss&lt;br&gt;(advantage-weighted logit update)" vertex="1">
+          <mxGeometry height="70" width="240" x="1120" y="410" as="geometry" />
+        </mxCell>
+        <mxCell id="ctx" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontStyle=2;fontColor=#333333;" value="context: this zooms into stage (2)&lt;br&gt;of the learner step (diagram 03).&lt;br&gt;Batch mechanics: diagram 06.&lt;br&gt;The recurrence itself: diagram 08." vertex="1">
+          <mxGeometry height="90" width="260" x="1120" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="cons" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=10;align=left;spacing=8;" value="What the correction buys (and costs):&lt;br&gt;• value targets estimate ≈ V^π (precisely: V^{π_ρ̄}, a policy between μ and π) instead of V^μ — the critic tracks the network being trained, not the one that played the games&lt;br&gt;• ρ̄ = 1 caps how much a single action that π now strongly prefers (ρ ≫ 1) can inflate a target — variance control at the price of a small bias toward μ&lt;br&gt;• c̄ = 1 truncates how far TD errors propagate backward along the trajectory — a surprise deep in the game cannot swamp early-state targets&lt;br&gt;• in this training regime μ ≈ π (mild ≈4× reuse, frequent broadcasts): ratios sit near 1, clipping is rare, and v-trace degrades gracefully to the Monte-Carlo return of the transformed game (γ = 1)" vertex="1">
+          <mxGeometry height="150" width="1320" x="40" y="600" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="actors" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="rec" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="rec" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0.25;exitY=1;entryX=0.5;entryY=0;" target="buffer" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="buffer" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="forward" value="sample B = 32">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="forward" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;fontSize=10;fontColor=#666666;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="vt" value="log π, V (detached)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="rec" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;fontSize=10;fontColor=#666666;exitX=1;exitY=0.5;entryX=0;entryY=0.85;" target="vt" value="log μ (stored at play time)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="710" y="245" />
+              <mxPoint x="710" y="410" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="rt" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" target="vt" value="r̃_t">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="vt" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;fontSize=10;fontColor=#666666;exitX=1;exitY=0.25;entryX=0;entryY=0.5;" target="lossV" value="value targets vs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="vt" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;fontSize=10;fontColor=#666666;exitX=1;exitY=0.75;entryX=0;entryY=0.5;" target="lossP" value="advantages A">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
