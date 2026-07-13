@@ -18,6 +18,9 @@ runs/
 # RBC server credentials (scripts/rc_connect.py)
 .env
 
+# RBC server history
+results/rbc_games/histories/
+
 # Drawio
 **/*.bkp
 
