@@ -1,5 +1,5 @@
 {
-  "checkpoint": "checkpoints/v0.8.0/deepnash_async_v0.8.0_70000.pt",
+  "checkpoint": "checkpoints/v0.33.0/deepnash_async_v0.33.0_240000.pt",
   "device": null,
   "greedy": false,
   "sample_threshold": 0.05,
