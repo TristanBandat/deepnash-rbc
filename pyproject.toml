@@ -24,6 +24,8 @@ notebooks = [
   "pandas>=2.0",
   "matplotlib>=3.7",
   "tensorboard>=2.14",
+  "polars>=1.0",
+  "orjson>=3.9",
 ]
 
 [project.scripts]
