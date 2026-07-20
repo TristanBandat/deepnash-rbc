@@ -46,7 +46,7 @@
         <mxCell id="buffer" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="Replay buffer&lt;br&gt;FIFO, capacity = 4096 trajectories" vertex="1">
           <mxGeometry height="100" width="200" x="850" y="130" as="geometry" />
         </mxCell>
-        <mxCell id="update" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;align=left;spacing=6;" value="R-NaD learner step&lt;br&gt;• sample 32 trajectories&lt;br&gt;• forward θ and frozen π_reg&lt;br&gt;• reward transform (η = 0.2)&lt;br&gt;• v-trace targets / advantages&lt;br&gt;• NeuRD + value loss → Adam" vertex="1">
+        <mxCell id="update" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;align=left;spacing=6;" value="R-NaD learner step&lt;br&gt;• sample 32 trajectories&lt;br&gt;• forward θ and frozen π_reg&lt;br&gt;• reward transform (η = 0.5)&lt;br&gt;• v-trace targets / advantages&lt;br&gt;• NeuRD + value loss → Adam" vertex="1">
           <mxGeometry height="180" width="230" x="1110" y="110" as="geometry" />
         </mxCell>
         <mxCell id="regBox" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="π_reg ← θ every 1000 steps&lt;br&gt;(one R-NaD iteration)" vertex="1">
@@ -63,9 +63,6 @@
         </mxCell>
         <mxCell id="metrics" parent="1" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="Metrics log (.jsonl)&lt;br&gt;loss, entropy, buffer, eval" vertex="1">
           <mxGeometry height="90" width="210" x="1130" y="680" as="geometry" />
-        </mxCell>
-        <mxCell id="idleBox" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;dashed=1;" value="Idle schedule (schedule.py)&lt;br&gt;training window 19:00–08:00, Mon–Fri nights&lt;br&gt;override for one-off runs: DEEPNASH_IGNORE_IDLE=1" vertex="1">
-          <mxGeometry height="110" width="380" x="40" y="640" as="geometry" />
         </mxCell>
         <mxCell id="eSpawn" edge="1" parent="1" source="learnFrame" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;fontSize=10;fontColor=#666666;exitX=0;exitY=0.09;entryX=1;entryY=0.03;" target="actFrame" value="spawn ×16 (once)">
           <mxGeometry relative="1" as="geometry" />
@@ -95,21 +92,11 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="eF" edge="1" parent="1" source="learnFrame" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0.3;exitY=1;entryX=0.5;entryY=0;" target="ckpt" value="every 10 000 steps&lt;br&gt;(and pre-idle)">
+        <mxCell id="eF" edge="1" parent="1" source="learnFrame" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0.3;exitY=1;entryX=0.5;entryY=0;" target="ckpt" value="every 10 000 steps">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="eG" edge="1" parent="1" source="learnFrame" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0.77;exitY=1;entryX=0.5;entryY=0;" target="metrics" value="per-step + eval metrics">
           <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="eH" edge="1" parent="1" source="idleBox" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;fontSize=10;fontColor=#666666;exitX=0.5;exitY=0;entryX=0.5;entryY=1;" target="actFrame" value="pause_event">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="eI" edge="1" parent="1" source="idleBox" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;fontSize=10;fontColor=#666666;exitX=1;exitY=0.5;entryX=0;entryY=0.95;" target="learnFrame" value="learner sleeps outside the window">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="785" y="695" />
-            </Array>
-          </mxGeometry>
         </mxCell>
       </root>
     </mxGraphModel>

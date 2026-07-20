@@ -10,7 +10,7 @@
         <mxCell id="frame1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#000000;dashed=1;verticalAlign=top;align=left;fontStyle=1;fontSize=12;spacingLeft=8;spacingTop=4;" value="(1) per-step ingredients (all detached — no gradient flows through any of this)" vertex="1">
           <mxGeometry height="150" width="1420" x="40" y="60" as="geometry" />
         </mxCell>
-        <mxCell id="i1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="transformed reward (R-NaD stage 1)&lt;br&gt;r̃_t = r_t − η·(log π(a_t|s_t) − log π_reg(a_t|s_t))&lt;br&gt;r_t = 0 except terminal z ∈ {+1, 0, −1};  η = 0.2" vertex="1">
+        <mxCell id="i1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="transformed reward (R-NaD stage 1)&lt;br&gt;r̃_t = r_t − η·(log π(a_t|s_t) − log π_reg(a_t|s_t))&lt;br&gt;r_t = 0 except terminal z ∈ {+1, 0, −1};  η = 0.5" vertex="1">
           <mxGeometry height="90" width="430" x="70" y="100" as="geometry" />
         </mxCell>
         <mxCell id="i2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="critic estimate from the CURRENT net&lt;br&gt;V_t = v_θ(s_t)&lt;br&gt;bootstrap past the last step: V_T = 0 (terminal)" vertex="1">
