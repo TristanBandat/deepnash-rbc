@@ -10,6 +10,8 @@ runs/
 **/*.lock
 **/*.jsonl
 **/*.pt
+**/*.zip
+**/*.parquet
 # tournament state must travel between dev and training server (sweep gauntlets
 # read/append it); metrics jsonl and checkpoints stay machine-local
 !results/tournament.jsonl
