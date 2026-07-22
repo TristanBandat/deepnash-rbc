@@ -1,19 +1,26 @@
 """End-to-end smoke test.
 
-Runs on CPU in well under a minute and verifies the whole pipeline wires up:
-  1. move encoding has no collisions on real legal-move sets
-  2. a full self-play game produces non-empty trajectories
-  3. one R-NaD learner step runs forward+backward and updates weights
-  4. the fast (vectorized) learner matches the legacy path and is not slower
-  5. skill eval vs baseline bots produces win-rates
-  6. the Stockfish analysis engine resolves and runs (bundled binary)
+Runs on CPU in well under a minute and verifies the whole pipeline wires up.
+Arch-independent checks run once (move encoding, Stockfish engine); the core
+pipeline runs per selected architecture:
+  - a full self-play game produces non-empty trajectories (exercises the agent's
+    acting-time streaming state for temporal archs)
+  - one R-NaD learner step runs forward+backward and updates weights (exercises
+    the temporal per-trajectory batching + gather-back for temporal archs)
+  - the fast (vectorized) learner matches the legacy path and is not slower
+  - skill eval vs baseline bots produces win-rates
 
-Run:  uv run deepnash-smoke   (or: python -m deepnash_rbc.smoke_test)
+Run:  uv run deepnash-smoke                 (resnet only, default)
+      uv run deepnash-smoke --arch transformer
+      uv run deepnash-smoke --arch all       (every arch; slower)
+      uv run deepnash-smoke --arch all --async  (also drive the real run_async loop)
+  (or: python -m deepnash_rbc.smoke_test ...)
 """
 
 from __future__ import annotations
 
 import copy
+import os
 import time
 
 import chess
@@ -21,15 +28,21 @@ import torch
 
 from .config import Config, EncodingConfig, NetworkConfig, TrainConfig, RNaDConfig
 from .encoding.moves import build_move_index, move_to_index, PASS_INDEX
-from .network import DeepNashNet
+from .network import make_net
 from .rnad.trainer import RNaDLearner
 from .selfplay import collect
 
 
-def _tiny_cfg() -> Config:
+def _tiny_cfg(arch: str = "resnet") -> Config:
+    temporal = arch != "resnet"
     return Config(
-        encoding=EncodingConfig(history=4),
-        network=NetworkConfig(channels=32, blocks=2, value_hidden=32),
+        # temporal archs stream one frame per step and ignore history; the ResNet
+        # stacks it, so give it a few frames to exercise the stack rebuild.
+        encoding=EncodingConfig(history=1 if temporal else 4),
+        network=NetworkConfig(
+            arch=arch, channels=32, blocks=2, value_hidden=32,
+            enc_blocks=2, mixer_dim=48, mixer_layers=2, nhead=4,
+        ),
         rnad=RNaDConfig(iteration_steps=2),
         train=TrainConfig(device="cpu", games_per_iter=1, seconds_per_player=30.0),
     )
@@ -53,7 +66,7 @@ def check_fast_learner(cfg: Config, device: torch.device, trajs) -> None:
     removes host overhead) and should not be slower per step. Both learners start
     from an identical net so one update must leave equal weights + stats."""
     torch.manual_seed(0)
-    base = DeepNashNet(cfg.encoding, cfg.network).to(device)
+    base = make_net(cfg.encoding, cfg.network).to(device)
 
     def run(fast: bool):
         learner = RNaDLearner(cfg, copy.deepcopy(base), device, fast=fast)
@@ -93,43 +106,126 @@ def check_stockfish() -> None:
     print(f"  Stockfish OK at {path} (e4 cpl={ev.cpl}, top1={ev.is_top1})")
 
 
-def main() -> None:
-    cfg = _tiny_cfg()
-    device = torch.device("cpu")
+def check_async(arch: str, device: torch.device) -> None:
+    """Drive the real async actor/learner loop (run_async) for a few learner
+    steps in a temp dir: spawns CPU actors, streams trajectories, broadcasts
+    weights, runs the temporal learner branch, and checkpoints. Confirms the
+    async path (the one training uses) wires up and its checkpoint reloads with
+    the right arch."""
+    import glob
+    import shutil
+    import tempfile
+
+    from .async_train import run_async
+
+    tmp = tempfile.mkdtemp(prefix="deepnash_smoke_async_")
+    prev_idle = os.environ.get("DEEPNASH_IGNORE_IDLE")
+    os.environ["DEEPNASH_IGNORE_IDLE"] = "1"  # never park in an idle window
+    try:
+        cfg = _tiny_cfg(arch)
+        cfg.train.device = "cpu"
+        cfg.train.checkpoint_dir = tmp
+        cfg.train.metrics_path = os.path.join(tmp, "metrics.jsonl")
+        cfg.train.async_actors = 2
+        cfg.train.min_buffer_to_train = 2
+        cfg.train.buffer_capacity = 16
+        cfg.train.batch_trajectories = 2
+        cfg.train.total_iters = 2       # learner steps in async mode
+        cfg.train.checkpoint_every = 2  # -> save at the final step
+        cfg.train.weight_broadcast_every = 1
+        cfg.train.idle_schedule = False
+        cfg.train.progress = False
+        cfg.train.seconds_per_player = 12.0
+        run_async(cfg)
+        ckpts = glob.glob(os.path.join(tmp, "**", "*.pt"), recursive=True)
+        assert ckpts, "async run produced no checkpoint"
+        from .play_session import load_net
+        net2, _ = load_net(ckpts[0], device)
+        assert bool(getattr(net2, "is_temporal", False)) == (arch != "resnet")
+        print(f"      async loop OK: {len(ckpts)} checkpoint(s), reload arch={arch} "
+              f"({type(net2).__name__})")
+    finally:
+        if prev_idle is None:
+            os.environ.pop("DEEPNASH_IGNORE_IDLE", None)
+        else:
+            os.environ["DEEPNASH_IGNORE_IDLE"] = prev_idle
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def check_arch(arch: str, device: torch.device, do_async: bool = False) -> None:
+    """Per-architecture pipeline: self-play -> one learner step (weights update)
+    -> fast==legacy parity -> skill eval. Exercises the real entry points (agent
+    acting-time state, temporal learner batching) for the given arch."""
+    print(f"\n=== arch={arch} ===")
+    cfg = _tiny_cfg(arch)
     torch.manual_seed(0)
 
-    print("[1/6] move encoding")
-    check_move_encoding()
-
-    print("[2/6] self-play game")
-    net = DeepNashNet(cfg.encoding, cfg.network).to(device)
+    print("  [a] self-play game")
+    net = make_net(cfg.encoding, cfg.network).to(device)
     trajs = collect(net, device, cfg, n_games=1)
     assert trajs, "no trajectories produced"
     total = sum(len(t) for t in trajs)
-    print(f"  {len(trajs)} trajectories, {total} steps total, "
-          f"z={[t.z for t in trajs]}")
+    print(f"      {len(trajs)} trajectories, {total} steps total, z={[t.z for t in trajs]}")
     assert total > 0
 
-    print("[3/6] one R-NaD learner step")
+    print("  [b] one R-NaD learner step")
     learner = RNaDLearner(cfg, net, device)
     before = next(net.parameters()).clone()
     metrics = learner.update(trajs)
-    after = next(net.parameters())
-    changed = not torch.allclose(before, after)
-    print(f"  metrics={metrics}")
-    print(f"  weights updated: {changed}")
+    changed = not torch.allclose(before, next(net.parameters()))
+    for k in ("loss", "policy_loss", "value_loss"):
+        assert metrics[k] == metrics[k], f"{k} is NaN"
+    print(f"      loss={metrics['loss']:.4f} policy={metrics['policy_loss']:.4f} "
+          f"value={metrics['value_loss']:.4f}; weights updated: {changed}")
     assert metrics and changed, "learner step did not update weights"
 
-    print("[4/6] fast vs legacy learner (perf path)")
+    print("  [c] fast vs legacy learner (perf path)")
     check_fast_learner(cfg, device, trajs)
 
-    print("[5/6] skill eval vs baseline bots")
+    print("  [d] skill eval vs baseline bots")
     from .eval import evaluate
     skill = evaluate(net, device, cfg, opponents=["random", "attacker"], games_per_opponent=2)
-    print(f"  {skill}")
+    print(f"      { {k: v for k, v in skill.items() if k.startswith('vs_') and k.count('_') == 1} }")
     assert any(k.startswith("vs_") for k in skill), "eval produced no win-rates"
 
-    print("[6/6] Stockfish analysis engine")
+    if do_async:
+        print("  [e] async actor/learner loop")
+        check_async(arch, device)
+
+
+def main() -> None:
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="deepnash-smoke")
+    ap.add_argument(
+        "--arch",
+        choices=("resnet", "gru", "lstm", "transformer", "all"),
+        default="resnet",
+        help="Architecture(s) to exercise. 'all' runs every arch (slower). "
+        "Default: resnet.",
+    )
+    ap.add_argument(
+        "--async",
+        dest="do_async",
+        action="store_true",
+        help="Also drive the real async actor/learner loop (run_async) per arch. "
+        "Off by default to keep the plain smoke fast; the sync learner path is "
+        "always checked.",
+    )
+    args = ap.parse_args()
+    archs = (
+        ("resnet", "gru", "lstm", "transformer") if args.arch == "all" else (args.arch,)
+    )
+    device = torch.device("cpu")
+    torch.manual_seed(0)
+
+    print("[move encoding]")
+    check_move_encoding()
+
+    for arch in archs:
+        check_arch(arch, device, do_async=args.do_async)
+
+    print("\n[Stockfish analysis engine]")
     check_stockfish()
 
     print("\nSMOKE TEST PASSED")

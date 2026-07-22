@@ -32,6 +32,19 @@ class NetworkConfig:
     value_hidden: int = 128
     move_actions: int = MOVE_ACTIONS  # 73*64 + 1 (pass)
     sense_actions: int = SENSE_ACTIONS  # 64
+    # --- architecture selection ---
+    # "resnet" is the original channel-stacked ResNet (DeepNashNet). The temporal
+    # archs (gru/lstm/transformer) are whole-game streaming-state models built by
+    # TemporalNet: they process one 19-channel frame per decision step and carry a
+    # recurrent/attention state across the game, so they ignore encoding.history
+    # (no channel stacking). See network.make_net.
+    arch: str = "resnet"  # resnet | gru | lstm | transformer
+    # The following are read only by the temporal archs (ignored by resnet):
+    enc_blocks: int = 4  # per-frame encoder residual depth (on one [19,8,8] frame)
+    mixer_dim: int = 128  # token / recurrent-context dim D
+    mixer_layers: int = 2  # GRU/LSTM layers or transformer encoder layers
+    nhead: int = 4  # transformer attention heads (ignored by gru/lstm)
+    max_seq: int = 512  # transformer positional-encoding cap; assert Tmax <= max_seq
 
 
 @dataclass

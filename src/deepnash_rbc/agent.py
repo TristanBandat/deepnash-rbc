@@ -41,6 +41,10 @@ class RNaDPlayer(Player):
         self.trajectory = Trajectory()
         self.color = chess.WHITE
         self._last_requested: Optional[chess.Move] = None
+        # temporal archs (TemporalNet) carry a recurrent/attention state across the
+        # game instead of stacking history; None for the channel-stacked ResNet.
+        self._is_temporal = bool(getattr(net, "is_temporal", False))
+        self._state = None
         # Optional, off by default (zero cost to training/self-play): maintain a
         # constructed naive belief board for offline Stockfish cost-of-info
         # analysis. belief_fens[i] is the believed position at the i-th move
@@ -56,6 +60,7 @@ class RNaDPlayer(Player):
     def handle_game_start(self, color: bool, board: chess.Board, opponent_name: str):
         self.color = color
         self.encoder.reset(color)
+        self._state = None
         self.trajectory = Trajectory()
         if self.belief is not None:
             self.belief.reset(color)
@@ -119,6 +124,12 @@ class RNaDPlayer(Player):
 
     # -- internals -----------------------------------------------------------
     def _forward(self):
+        if self._is_temporal:
+            # one 19-channel frame per decision step; carry the streaming state.
+            x = torch.from_numpy(self.encoder.frame()).unsqueeze(0).to(self.device)
+            with torch.no_grad():
+                value, sense, move, self._state = self.net.step(x, self._state)
+            return value, sense, move
         x = torch.from_numpy(self.encoder.tensor()).unsqueeze(0).to(self.device)
         with torch.no_grad():
             return self.net(x)

@@ -37,7 +37,7 @@ import torch.multiprocessing as mp
 from . import config as config_mod
 from .async_train import BatchPrefetcher, _drain_latest, _sd_to_numpy, actor_loop
 from .config import Config
-from .network import DeepNashNet
+from .network import make_net
 from .replay import ReplayBuffer
 from .rnad.trainer import RNaDLearner
 from .train import resolve_device
@@ -82,7 +82,7 @@ def measure_training(
     ctx = mp.get_context("spawn")
     device = resolve_device(cfg.train.device)
 
-    net = DeepNashNet(cfg.encoding, cfg.network).to(device)
+    net = make_net(cfg.encoding, cfg.network).to(device)
     learner = RNaDLearner(cfg, net, device, fast=fast)
     buffer = ReplayBuffer(cfg.train.buffer_capacity)
 

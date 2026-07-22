@@ -140,6 +140,17 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         "for each distinct value. Default: config value.",
     )
     p.add_argument(
+        "--arch",
+        choices=("resnet", "gru", "lstm", "transformer"),
+        default=None,
+        help="Network architecture (NetworkConfig.arch). 'resnet' is the original "
+        "channel-stacked ResNet; gru/lstm/transformer are whole-game streaming-state "
+        "models that ignore --history. Shape/arch-locked to existing checkpoints, so "
+        "bump the version in pyproject.toml when switching. Default: config value. "
+        "Temporal knobs (mixer_dim, mixer_layers, enc_blocks, nhead, max_seq) are set "
+        "via --set network.<field>=<value>.",
+    )
+    p.add_argument(
         "--set",
         dest="overrides",
         action="append",
@@ -245,6 +256,8 @@ def config_from_args(argv: list[str] | None = None, prog: str | None = None) -> 
         cfg.network.blocks = args.blocks
     if args.history is not None:
         cfg.encoding.history = args.history
+    if args.arch is not None:
+        cfg.network.arch = args.arch
 
     if args.checkpoint_dir is not None:
         cfg.train.checkpoint_dir = args.checkpoint_dir

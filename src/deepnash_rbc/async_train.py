@@ -46,7 +46,7 @@ from .cli import config_from_args
 from .config import Config
 from .eval import evaluate
 from .metrics import MetricsLogger, resume_metrics
-from .network import DeepNashNet
+from .network import DeepNashNet, make_net
 from .replay import ReplayBuffer
 from .rnad.trainer import CollatedBatch, RNaDLearner
 from .schedule import wait_until_allowed
@@ -107,7 +107,7 @@ def actor_loop(actor_id, init_sd, cfg: Config, traj_q, weight_q, stop_event,
                pause_event):
     torch.set_num_threads(1)  # one thread per actor: avoid oversubscription
     device = torch.device("cpu")
-    net = DeepNashNet(cfg.encoding, cfg.network)
+    net = make_net(cfg.encoding, cfg.network)
     _load_numpy_sd(net, init_sd)
     net.eval()
 
@@ -184,7 +184,7 @@ def run_async(cfg: Config | None = None) -> None:
     device = resolve_device(cfg.train.device)
     ctx = mp.get_context("spawn")
 
-    net = DeepNashNet(cfg.encoding, cfg.network).to(device)
+    net = make_net(cfg.encoding, cfg.network).to(device)
     learner = RNaDLearner(cfg, net, device)
     buffer = ReplayBuffer(cfg.train.buffer_capacity)
     os.makedirs(version_dir(cfg.train.checkpoint_dir), exist_ok=True)

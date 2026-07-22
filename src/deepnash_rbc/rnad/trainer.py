@@ -41,7 +41,6 @@ import numpy as np
 import torch
 
 from ..config import Config
-from ..network import DeepNashNet
 from ..replay import Trajectory
 from ..encoding.moves import MOVE_ACTIONS
 from .neurd import all_actions_neurd_loss, neurd_loss
@@ -79,13 +78,14 @@ class RNaDLearner:
     def __init__(
         self,
         cfg: Config,
-        net: DeepNashNet,
+        net: torch.nn.Module,
         device: torch.device,
         fast: bool | None = None,
     ):
         self.cfg = cfg
         self.device = device
-        self.history = cfg.encoding.history  # stack depth for obs reconstruction
+        self.arch = cfg.network.arch  # "resnet" -> channel-stacked; else temporal
+        self.history = cfg.encoding.history  # stack depth for obs reconstruction (resnet)
         self.net = net.to(device)
         self.reg_net = copy.deepcopy(net).to(device).eval()
         for p in self.reg_net.parameters():
@@ -123,17 +123,31 @@ class RNaDLearner:
         self.net.train()
 
         trajectories, lengths = col.trajectories, col.lengths
-        obs, heads, actions, behavior_logp, legals = self._to_device(col)
 
         amp_ctx = (
             torch.autocast(device_type=self.device.type, dtype=torch.bfloat16)
             if self.amp
             else _nullcontext()
         )
-        with amp_ctx:
-            value, sense_logits, move_logits = self._fwd(obs)        # current policy
-            with torch.no_grad():
-                _, sense_reg, move_reg = self._reg_fwd(obs)          # regularization
+        if self.arch == "resnet":
+            obs, heads, actions, behavior_logp, legals = self._to_device(col)
+            with amp_ctx:
+                value, sense_logits, move_logits = self._fwd(obs)    # current policy
+                with torch.no_grad():
+                    _, sense_reg, move_reg = self._reg_fwd(obs)      # regularization
+        else:
+            seq, valid, (rows, cols), heads, actions, behavior_logp, legals = (
+                self._to_device_seq(col)
+            )
+            with amp_ctx:
+                value, sense_logits, move_logits = self._fwd(seq, valid)  # [T,B,*]
+                with torch.no_grad():
+                    _, sense_reg, move_reg = self._reg_fwd(seq, valid)
+            # gather [T,B,*] back to flat [N,*] in trajectory-step (glob) order, so
+            # everything below is identical to the resnet path.
+            value = value[rows, cols]
+            sense_logits, move_logits = sense_logits[rows, cols], move_logits[rows, cols]
+            sense_reg, move_reg = sense_reg[rows, cols], move_reg[rows, cols]
         value = value.float()
         sense_logits, move_logits = sense_logits.float(), move_logits.float()
         sense_reg, move_reg = sense_reg.float(), move_reg.float()
@@ -179,26 +193,34 @@ class RNaDLearner:
         steps = [s for t in trajectories for s in t.steps]
         N = len(steps)
         cur_np = np.stack([s.obs for s in steps])                   # [N, F, 8, 8]
-        committed = [f for t in trajectories for f in t.frames]
-        frames_np = np.zeros((1 + len(committed), *cur_np.shape[1:]), dtype=cur_np.dtype)
-        if committed:
-            frames_np[1:] = np.stack(committed)                     # row 0 stays blank
-        # global row of each trajectory's first committed frame (0 = blank pad)
-        starts = np.cumsum([1] + [len(t.frames) for t in trajectories[:-1]])
-        start_per_step = np.repeat(starts, [len(t) for t in trajectories])
-        turns = np.fromiter((s.turn for s in steps), dtype=np.int64, count=N)
-        # per step: the (history-1) committed frames preceding it, exactly the
-        # window ObservationEncoder.tensor() emits (blank-padded on the left)
-        rel = turns[:, None] + np.arange(-(self.history - 1), 0, dtype=np.int64)
-        gather_idx = np.where(rel < 0, 0, rel + start_per_step[:, None])
-
         cur_t = torch.from_numpy(cur_np)
-        frames_t = torch.from_numpy(frames_np)
-        idx_t = torch.from_numpy(gather_idx)
-        if self.device.type == "cuda":
-            cur_t, frames_t, idx_t = (
-                x.pin_memory() for x in (cur_t, frames_t, idx_t)
-            )
+
+        if self.arch == "resnet":
+            # deduplicated committed frames + per-step gather window (the stack
+            # ObservationEncoder.tensor() emits, blank-padded on the left).
+            committed = [f for t in trajectories for f in t.frames]
+            frames_np = np.zeros((1 + len(committed), *cur_np.shape[1:]), dtype=cur_np.dtype)
+            if committed:
+                frames_np[1:] = np.stack(committed)                 # row 0 stays blank
+            # global row of each trajectory's first committed frame (0 = blank pad)
+            starts = np.cumsum([1] + [len(t.frames) for t in trajectories[:-1]])
+            start_per_step = np.repeat(starts, [len(t) for t in trajectories])
+            turns = np.fromiter((s.turn for s in steps), dtype=np.int64, count=N)
+            rel = turns[:, None] + np.arange(-(self.history - 1), 0, dtype=np.int64)
+            gather_idx = np.where(rel < 0, 0, rel + start_per_step[:, None])
+            frames_t = torch.from_numpy(frames_np)
+            idx_t = torch.from_numpy(gather_idx)
+            if self.device.type == "cuda":
+                cur_t, frames_t, idx_t = (
+                    x.pin_memory() for x in (cur_t, frames_t, idx_t)
+                )
+        else:
+            # temporal archs consume the ordered per-step frame sequence directly;
+            # no history stacking, so the dedup/gather machinery is unused.
+            frames_t = None
+            idx_t = None
+            if self.device.type == "cuda":
+                cur_t = cur_t.pin_memory()
         heads = torch.from_numpy(
             np.fromiter((s.head for s in steps), dtype=np.int64, count=len(steps))
         )
@@ -230,6 +252,33 @@ class RNaDLearner:
         actions = col.actions.to(self.device)
         behavior_logp = col.behavior_logp.to(self.device)
         return obs, heads, actions, behavior_logp, col.legals
+
+    def _to_device_seq(self, col: CollatedBatch):
+        # temporal path: pad the per-step frames into left-aligned [Tmax, B, F, 8, 8]
+        # sequences. The flat<->[Tmax,B] mapping (rows, cols) is built from
+        # ``lengths`` exactly as _vtrace_fast does, so a step's forward output and
+        # its v-trace target land at the same position; the caller gathers the
+        # [Tmax,B,*] head outputs back to flat [N,*] via out = y[rows, cols].
+        device = self.device
+        cur = col.cur.to(device, non_blocking=True).float()        # [N, F, 8, 8]
+        lengths = col.lengths
+        B = len(lengths)
+        Tmax = max(lengths)
+        r_list, c_list = [], []
+        for b, L in enumerate(lengths):                             # left-aligned
+            r_list.append(np.arange(L, dtype=np.int64))
+            c_list.append(np.full(L, b, dtype=np.int64))
+        rows = torch.from_numpy(np.concatenate(r_list)).to(device)
+        cols = torch.from_numpy(np.concatenate(c_list)).to(device)
+        F = cur.shape[1]
+        seq = torch.zeros((Tmax, B, F, *cur.shape[2:]), device=device, dtype=cur.dtype)
+        seq[rows, cols] = cur                                       # cur is in flat (glob) order
+        valid = torch.zeros((Tmax, B), dtype=torch.bool, device=device)
+        valid[rows, cols] = True
+        heads = col.heads.to(device)
+        actions = col.actions.to(device)
+        behavior_logp = col.behavior_logp.to(device)
+        return seq, valid, (rows, cols), heads, actions, behavior_logp, col.legals
 
     # -- losses + optimizer step (shared by both paths) ----------------------
     def _losses_and_step(self, value, vs_g, adv_g, taken_logit, entropy, head_data) -> dict:

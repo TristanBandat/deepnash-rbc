@@ -19,7 +19,7 @@ import torch
 from flask import Flask, jsonify, request, send_file
 
 from .config import EncodingConfig, NetworkConfig
-from .network import DeepNashNet
+from .network import DeepNashNet, make_net
 from .play_session import GameSession, load_net
 
 app = Flask(__name__)
@@ -37,7 +37,7 @@ def _get_net(checkpoint: str) -> Tuple[DeepNashNet, EncodingConfig]:
     device = torch.device(_args.device if torch.cuda.is_available() or _args.device == "cpu" else "cpu")
     if checkpoint == "__random__":
         enc = EncodingConfig()
-        net = DeepNashNet(enc, NetworkConfig()).to(device).eval()
+        net = make_net(enc, NetworkConfig()).to(device).eval()
     else:
         path = str(Path(_args.checkpoint_dir) / checkpoint)
         net, enc = load_net(path, device)
