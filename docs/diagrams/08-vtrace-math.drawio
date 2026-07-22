@@ -1,0 +1,142 @@
+<mxfile host="Electron" agent="claude-code">
+  <diagram id="vtrace-math" name="vtrace-math">
+    <mxGraphModel dx="1465" dy="894" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="950" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;" value="V-trace — the mathematics, one trajectory at a time (rnad/vtrace.py · RNaDLearner._vtrace_fast) — settings: γ = 1, ρ̄ = c̄ = 1" vertex="1">
+          <mxGeometry height="30" width="1200" x="40" y="15" as="geometry" />
+        </mxCell>
+        <mxCell id="frame1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#000000;dashed=1;verticalAlign=top;align=left;fontStyle=1;fontSize=12;spacingLeft=8;spacingTop=4;" value="(1) per-step ingredients (all detached — no gradient flows through any of this)" vertex="1">
+          <mxGeometry height="150" width="1420" x="40" y="60" as="geometry" />
+        </mxCell>
+        <mxCell id="i1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="transformed reward (R-NaD stage 1)&lt;br&gt;r̃_t = r_t − η·(log π(a_t|s_t) − log π_reg(a_t|s_t))&lt;br&gt;r_t = 0 except terminal z ∈ {+1, 0, −1};  η = 0.5" vertex="1">
+          <mxGeometry height="90" width="430" x="70" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="i2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="critic estimate from the CURRENT net&lt;br&gt;V_t = v_θ(s_t)&lt;br&gt;bootstrap past the last step: V_T = 0 (terminal)" vertex="1">
+          <mxGeometry height="90" width="400" x="530" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="i3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="importance ratio (target π vs behavior μ)&lt;br&gt;ρ_t = π(a_t|s_t) / μ(a_t|s_t) = exp(log π − log μ)&lt;br&gt;log μ was stored by the actor at play time" vertex="1">
+          <mxGeometry height="90" width="470" x="960" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="frame2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#000000;dashed=1;verticalAlign=top;align=left;fontStyle=1;fontSize=12;spacingLeft=8;spacingTop=4;" value="(2) clipping" vertex="1">
+          <mxGeometry height="120" width="680" x="40" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="c1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="ρ̂_t = min(ρ_t, ρ̄)        ĉ_t = min(ρ_t, c̄)        with ρ̄ = c̄ = 1&lt;br&gt;one-sided: ratios below 1 pass through — actions π now dislikes keep their small weight" vertex="1">
+          <mxGeometry height="70" width="620" x="70" y="285" as="geometry" />
+        </mxCell>
+        <mxCell id="frame3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#000000;dashed=1;verticalAlign=top;align=left;fontStyle=1;fontSize=12;spacingLeft=8;spacingTop=4;" value="(3) weighted TD error" vertex="1">
+          <mxGeometry height="120" width="680" x="760" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="d1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="δ_t = ρ̂_t · ( r̃_t + γ·V_{t+1} − V_t )&lt;br&gt;the one-step TD error of the transformed game, down-weighted where μ over-sampled the action" vertex="1">
+          <mxGeometry height="70" width="620" x="790" y="285" as="geometry" />
+        </mxCell>
+        <mxCell id="frame4" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#6C8EBF;dashed=1;verticalAlign=top;align=left;fontStyle=1;fontSize=12;spacingLeft=8;spacingTop=4;fontColor=#6C8EBF;" value="(4) backward recurrence — one sweep per trajectory, right to left" vertex="1">
+          <mxGeometry height="250" width="1400" x="40" y="410" as="geometry" />
+        </mxCell>
+        <mxCell id="f1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" value="v_t = V_t + δ_t + γ·ĉ_t·( v_{t+1} − V_{t+1} )&lt;br&gt;code form:  acc ← δ_t + ĉ_t·acc ;   vs_t = V_t + acc      (t = T−1 … 0, acc starts at 0)" vertex="1">
+          <mxGeometry height="70" width="830" x="70" y="445" as="geometry" />
+        </mxCell>
+        <mxCell id="t0" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=10;" value="t = 0&lt;br&gt;vs_0 = V_0 + acc" vertex="1">
+          <mxGeometry height="45" width="170" x="70" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="t1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=10;" value="t = 1" vertex="1">
+          <mxGeometry height="45" width="170" x="290" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="tdots" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=14;" value="⋯" vertex="1">
+          <mxGeometry height="45" width="80" x="510" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="tT2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=10;" value="t = T−2" vertex="1">
+          <mxGeometry height="45" width="170" x="640" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="tT1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=10;" value="t = T−1&lt;br&gt;acc = δ_{T−1}" vertex="1">
+          <mxGeometry height="45" width="170" x="860" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="et1" edge="1" parent="1" source="t1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" target="t0" value="δ_0 + ĉ_0·acc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="et2" edge="1" parent="1" source="tdots" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" target="t1" value="δ_1 + ĉ_1·acc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="et3" edge="1" parent="1" source="tT2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" target="tdots" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="et4" edge="1" parent="1" source="tT1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" target="tT2" value="δ_{T−2} + ĉ_{T−2}·acc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="padNote" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontStyle=2;fontColor=#333333;" value="fast path: 32 trajectories stacked into a [T_max, 32] grid and swept together;&amp;nbsp;&lt;div&gt;padded cells carry ρ̂ = ĉ = δ = 0, so each column is exactly the standalone&amp;nbsp;&lt;/div&gt;&lt;div&gt;recurrence — the accumulator never crosses a trajectory boundary (diagram 06)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="110" width="360" x="1060" y="540" as="geometry" />
+        </mxCell>
+        <mxCell id="frame5" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#D79B00;dashed=1;verticalAlign=top;align=left;fontStyle=1;fontSize=12;spacingLeft=8;spacingTop=4;fontColor=#D79B00;" value="(5) outputs → losses" vertex="1">
+          <mxGeometry height="210" width="780" x="40" y="700" as="geometry" />
+        </mxCell>
+        <mxCell id="o1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" value="value target vs_t (detached)" vertex="1">
+          <mxGeometry height="60" width="300" x="70" y="735" as="geometry" />
+        </mxCell>
+        <mxCell id="o2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;fontSize=11;" value="advantage A_t = ρ̂_t·( r̃_t + γ·vs_{t+1} − V_t )&lt;br&gt;note: bootstraps on the TARGET vs_{t+1}, not V_{t+1}" vertex="1">
+          <mxGeometry height="70" width="300" x="70" y="820" as="geometry" />
+        </mxCell>
+        <mxCell id="l1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;" value="value loss = mean over N of ( v_θ(s_t) − vs_t )²" vertex="1">
+          <mxGeometry height="60" width="320" x="460" y="735" as="geometry" />
+        </mxCell>
+        <mxCell id="l2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#D79B00;fontSize=11;" value="NeuRD policy loss — A_t scales the logit update of every legal action (β = 2.5, diagram 03)" vertex="1">
+          <mxGeometry height="70" width="320" x="460" y="820" as="geometry" />
+        </mxCell>
+        <mxCell id="cons" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;fontSize=10;align=left;spacing=8;" value="Reading the clips:&lt;br&gt;• π = μ (on-policy): all ratios = 1, nothing clips, the sum telescopes → vs_t = Σ_{s≥t} r̃_s — the plain Monte-Carlo return of the transformed game (γ = 1)&lt;br&gt;• ρ̄ sets the FIXED POINT: v-trace estimates V^{π_ρ̄} with π_ρ̄ ∝ min(ρ̄·μ, π) — between V^μ (ρ̄ → 0) and V^π (ρ̄ → ∞); ρ̄ = 1 keeps it close to V^π while μ ≈ π&lt;br&gt;• c̄ does NOT move the fixed point — it only shortens how far a future δ propagates backward: bias-free variance control&lt;br&gt;• every output here is a constant for backprop (detached) — gradients flow only through the two losses on the left" vertex="1">
+          <mxGeometry height="210" width="580" x="860" y="700" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="i3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=0.25;exitY=1;entryX=0.5;entryY=0;" target="c1" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1078" y="225" />
+              <mxPoint x="380" y="225" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="i1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;fontSize=10;fontColor=#666666;exitX=0.75;exitY=1;entryX=0.3;entryY=0;" target="d1" value="r̃_t">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="393" y="232" />
+              <mxPoint x="976" y="232" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="i2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;fontSize=10;fontColor=#666666;exitX=0.75;exitY=1;entryX=0.7;entryY=0;" target="d1" value="V_t, V_{t+1}">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="830" y="240" />
+              <mxPoint x="1224" y="240" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="c1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="d1" value="ρ̂_t">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="d1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0.25;exitY=1;entryX=0.75;entryY=0;" target="f1" value="δ_t">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="1" source="c1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=0.25;exitY=1;entryX=0.25;entryY=0;" target="f1" value="ĉ_t">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="f1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;fontSize=10;fontColor=#666666;exitX=0;exitY=0.5;entryX=0.5;entryY=0;" target="o1" value="vs_t">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="50" y="480" />
+              <mxPoint x="50" y="710" />
+              <mxPoint x="220" y="710" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="o1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;fontSize=10;fontColor=#666666;exitX=0.5;exitY=1;entryX=0.15;entryY=0;" target="o2" value="vs_{t+1}">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="o1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="l1" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" edge="1" parent="1" source="o2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" target="l2" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

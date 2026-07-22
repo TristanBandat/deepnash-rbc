@@ -1,0 +1,30 @@
+Loaded checkpoints/v0.10.0/deepnash_async_v0.10.0_80000.pt (history=64); engine=/home/tristan/Dropbox/JKU/Semester_14/02_thesis/deepnash-rbc/tools/stockfish/stockfish-ubuntu-x86-64-bmi2; device=cuda; workers=8
+[mq:mht] game skipped (game_error): TypeError: list indices must be integers or slices, not NoneType
+[mq:mht] game skipped (game_error): TypeError: list indices must be integers or slices, not NoneType
+[mq:mht] game skipped (game_error): EngineTerminatedError: engine process died unexpectedly (exit code: -11)
+[mq:mht] game skipped (game_error): TypeError: list indices must be integers or slices, not NoneType
+
+=== Move quality & win-rate (vs ground-truth board) ===
+
+=== vs trout  (n=100  W/D/L=89/0/11  win=0.89  draw=0.0) ===
+            ACPL  blunder%   top1%  scored  no-eval
+white      247.4     30.2%   28.2%     195       75
+black      271.8     34.6%   17.6%     289       67
+overall    261.9     32.9%   21.9%     484      142
+  Information cost (centipawns, higher = imperfect info hurt more):
+    A  taken move: true board vs naive-belief board   +65.3 cp  (n=435, proxy belief)
+    B  on true board: taken vs requested move         +0.0 cp  (n=327, truncation cost)
+    truncated moves (requested != taken): 186/626
+
+=== vs mht  (n=96  W/D/L=68/0/28  win=0.7083  draw=0.0) ===
+            ACPL  blunder%   top1%  scored  no-eval
+white      172.2     23.1%   19.3%     264       50
+black      154.5     22.9%    5.6%     463       54
+overall    160.9     23.0%   10.6%     727      104
+  Information cost (centipawns, higher = imperfect info hurt more):
+    A  taken move: true board vs naive-belief board   -1.9 cp  (n=615, proxy belief)
+    B  on true board: taken vs requested move         +0.0 cp  (n=543, truncation cost)
+    truncated moves (requested != taken): 245/831
+
+=== Strength ladder (win-rate vs TroutBot @ Skill Level) ===
+[ladder] skill=20  win=0.85  draw=0.0  (n=100)

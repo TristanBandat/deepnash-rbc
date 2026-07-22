@@ -28,11 +28,16 @@ from .replay import MOVE, SENSE, Step, Trajectory
 
 class RNaDPlayer(Player):
     def __init__(self, net, device: torch.device, history: int = 8, sample: bool = True,
-                 track_belief: bool = False):
+                 track_belief: bool = False, sample_threshold: float = 0.0):
         self.net = net
         self.device = device
         self.encoder = ObservationEncoder(history=history)
         self.sample = sample
+        # deployment-time truncated sampling (DeepNash-style): drop actions with
+        # probability < sample_threshold and renormalize, so play stays mixed but
+        # the low-probability blunder tail is never sampled. 0.0 = raw policy,
+        # which is what training/self-play must use.
+        self.sample_threshold = sample_threshold
         self.trajectory = Trajectory()
         self.color = chess.WHITE
         self._last_requested: Optional[chess.Move] = None
@@ -98,7 +103,10 @@ class RNaDPlayer(Player):
     def handle_move_result(self, requested_move: Optional[chess.Move], taken_move: Optional[chess.Move],
                            captured_opponent_piece: bool, capture_square: Optional[int]):
         self.encoder.move_result(requested_move, taken_move, captured_opponent_piece, capture_square)
-        self.encoder.commit_turn()
+        # store each committed frame once per trajectory; steps reference it by
+        # turn index instead of carrying the full history stack (see replay.py)
+        committed = self.encoder.commit_turn()
+        self.trajectory.frames.append(committed.astype(np.uint8))
         if self.belief is not None:
             self.belief.apply_my_move(taken_move)
 
@@ -123,18 +131,26 @@ class RNaDPlayer(Player):
         logp_all = torch.log_softmax(mask, dim=0)
         if self.sample:
             probs = logp_all.exp()
+            if self.sample_threshold > 0.0:
+                keep = probs >= self.sample_threshold
+                if keep.any():  # else: policy flatter than threshold, sample raw
+                    probs = torch.where(keep, probs, torch.zeros_like(probs))
+                    probs = probs / probs.sum()
+                    logp_all = probs.log()
             action = int(torch.multinomial(probs, 1).item())
         else:
             action = int(torch.argmax(logp_all).item())
         return action, float(logp_all[action].item())
 
     def _record(self, head: int, legal: np.ndarray, action: int, logp: float):
-        # planes are all binary -> store as uint8 (4x smaller than float32 for the
-        # replay buffer and, crucially, for the actor->learner queue in async mode)
+        # planes are all binary -> store as uint8; only the in-progress frame is
+        # stored per step (the committed history is deduplicated on the
+        # trajectory and the stack rebuilt learner-side, see replay.py)
         self.trajectory.add(Step(
-            obs=self.encoder.tensor().astype(np.uint8),
+            obs=self.encoder.frame().astype(np.uint8),
             head=head,
             legal=legal,
             action=action,
             behavior_logprob=logp,
+            turn=len(self.trajectory.frames),
         ))

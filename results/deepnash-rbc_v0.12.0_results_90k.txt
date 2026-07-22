@@ -1,0 +1,23 @@
+Loaded checkpoints/v0.12.0/deepnash_async_v0.12.0_90000.pt (history=256); engine=/home/tristan/Dropbox/JKU/Semester_14/02_thesis/deepnash-rbc/tools/stockfish/stockfish-ubuntu-x86-64-bmi2; device=cuda; workers=8
+
+=== Move quality & win-rate (vs ground-truth board) ===
+
+=== vs trout  (n=100  W/D/L=87/0/13  win=0.87  draw=0.0) ===
+            ACPL  blunder%   top1%  scored  no-eval
+white      201.2     33.0%    3.8%     288       67
+black      242.3     39.0%    3.7%     187       51
+overall    217.4     35.4%    3.8%     475      118
+  Information cost (centipawns, higher = imperfect info hurt more):
+    A  taken move: true board vs naive-belief board   -22.7 cp  (n=440, proxy belief)
+    B  on true board: taken vs requested move         +0.0 cp  (n=400, truncation cost)
+    truncated moves (requested != taken): 81/593
+
+=== vs mht  (n=100  W/D/L=29/0/71  win=0.29  draw=0.0) ===
+            ACPL  blunder%   top1%  scored  no-eval
+white      116.8     17.5%    2.3%     257       52
+black      134.7     20.0%   11.6%     595       72
+overall    129.3     19.2%    8.8%     852      124
+  Information cost (centipawns, higher = imperfect info hurt more):
+    A  taken move: true board vs naive-belief board   -12.1 cp  (n=773, proxy belief)
+    B  on true board: taken vs requested move         +0.0 cp  (n=663, truncation cost)
+    truncated moves (requested != taken): 201/976

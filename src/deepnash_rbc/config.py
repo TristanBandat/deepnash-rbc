@@ -15,7 +15,9 @@ from .encoding.moves import MOVE_ACTIONS, SENSE_ACTIONS
 
 @dataclass
 class EncodingConfig:
-    history: int = 8  # number of past observation frames stacked into the input tensor
+    history: int = (
+        128  # number of past observation frames stacked into the input tensor
+    )
     frame_channels: int = FRAME_CHANNELS
 
     @property
@@ -54,9 +56,7 @@ class RNaDConfig:
     full_action_neurd: bool = True
     # --- optimization ---
     lr: float = 5e-5
-    # Tight global-norm clip: NeuRD gradients are noisy and the occasional large
-    # update spikes the loss curves; 1.0 tames that (was 10.0, which barely bit).
-    grad_clip: float = 1.0
+    grad_clip: float = 10.0
     # --- learner performance (model-neutral unless noted) ---
     # fast_learner: vectorized learner step (batched v-trace, scatter-built legal
     # masks, fused scalar readback). Bit-identical math to the legacy path -- it
@@ -66,7 +66,7 @@ class RNaDConfig:
     # compile_net / amp DO touch numerics (kernel fusion / bf16), so they are
     # opt-in and excluded from the bit-identical guarantee -- A/B them on the GPU.
     compile_net: bool = False  # torch.compile the forward (eager state_dict kept)
-    amp: bool = False  # bf16 autocast on the forward (L40S-friendly)
+    amp: bool = True  # bf16 autocast on the forward (L40S-friendly)
 
 
 @dataclass
@@ -75,12 +75,8 @@ class TrainConfig:
         8  # self-play games collected before each learner update batch
     )
     learner_steps_per_iter: int = 4
-    total_iters: int = 1_000_000
-    # Trajectories sampled from buffer per learner step. Gradient-estimate
-    # variance ~ 1/batch, so 64 (was 16) roughly halves the per-step noise that
-    # made the v0.3.0 curves jagged, and lowers replay reuse. Bump to 128 if the
-    # GPU has headroom; costs steps/s.
-    batch_trajectories: int = 64
+    total_iters: int = 80_000
+    batch_trajectories: int = 32  # trajectories sampled from buffer per learner step
     buffer_capacity: int = 4096
     num_actors: int = 1  # >1 uses torch.multiprocessing (see selfplay.py)
     device: str = "cuda"  # falls back to cpu automatically if unavailable
@@ -93,8 +89,9 @@ class TrainConfig:
     resume: str | None = None
     # --- evaluation / skill metrics ---
     # eval_every: int = 50        # run a skill eval every N iterations (0 disables)
-    eval_every: int = 100_000
-    eval_games: int = 20  # games per opponent (split evenly across colors)
+    # eval_every: int = 10_000
+    eval_every: int = 0
+    eval_games: int = 50  # games per opponent (split evenly across colors)
     eval_opponents: tuple = (
         "random",
         "attacker",
@@ -107,28 +104,35 @@ class TrainConfig:
     # when stdout isn't a TTY so it doesn't spam redirected logs). --no-progress
     # turns it off entirely.
     progress: bool = True
-    # --- nightly idle schedule (sound / electricity) ---
-    # When idle_schedule is True, training only runs inside the recurring window
-    # [train_start_hour, train_stop_hour) on the listed weekdays (local time);
-    # outside it the learner sleeps and the async actors are paused so the rig is
-    # quiet and draws little power. The window may wrap midnight (start > stop):
-    # the default 19:00->06:00 on Mon-Fri means "train on weekday nights" (Friday
-    # night runs into Saturday 06:00, then the weekend idles). Hour granularity.
+    # --- idle schedule (sound / electricity) ---
+    # When idle_schedule is True, training pauses during working hours on the
+    # listed WORKING days (local time): on those days it only runs inside
+    # [train_start_hour, train_stop_hour), which may wrap midnight (start > stop).
+    # Days not listed have no working hours, so training runs around the clock.
+    # The default 19:00->06:00 on Mon-Fri means "quiet during weekday working
+    # hours": weekday nights and the whole weekend train. While idle the learner
+    # sleeps and the async actors are paused so the rig is quiet and draws little
+    # power. Hour granularity.
     # Override for a one-off run without editing this file: DEEPNASH_IGNORE_IDLE=1.
     idle_schedule: bool = True
     train_start_hour: int = 19  # window opens (training resumes) at 19:00
     train_stop_hour: int = 6  # window closes (training pauses) at 06:00
-    train_days: tuple = (0, 1, 2, 3, 4)  # nights starting Mon-Fri (Mon=0 .. Sun=6)
+    train_days: tuple = (0, 1, 2, 3, 4)  # working days Mon-Fri (Mon=0 .. Sun=6)
     # --- async actor/learner (deepnash-train-async) ---
     # In async mode, eval_every / checkpoint_every / total_iters count LEARNER
     # STEPS, not outer iterations.
-    async_actors: int = 4  # persistent CPU self-play workers
+    async_actors: int = 16  # persistent CPU self-play workers
     traj_queue_size: int = 256  # actor->learner queue cap (backpressure)
     min_buffer_to_train: int = 64  # warmup: learner waits for this many trajectories
     drain_per_cycle: int = 64  # max trajectories pulled from queue per learner cycle
     weight_broadcast_every: int = (
         20  # push fresh weights to actors every N learner steps
     )
+    # Batch prefetch: sample + collate the next batch (flatten + pin_memory of
+    # the deduplicated observations, see replay.py) on a background thread so it
+    # overlaps the GPU step. Depth = max batches staged ahead; 0 disables
+    # (collate inline, pre-prefetch behavior).
+    prefetch_depth: int = 2
 
 
 @dataclass

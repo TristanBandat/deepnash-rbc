@@ -35,7 +35,7 @@ import torch
 import torch.multiprocessing as mp
 
 from . import config as config_mod
-from .async_train import _drain_latest, _sd_to_numpy, actor_loop
+from .async_train import BatchPrefetcher, _drain_latest, _sd_to_numpy, actor_loop
 from .config import Config
 from .network import DeepNashNet
 from .replay import ReplayBuffer
@@ -63,14 +63,17 @@ def measure_training(
     """Run the actual async loop (GPU learner + ``n_actors`` CPU actors) and time it.
 
     This is a faithful, instrumented copy of ``async_train.run_async``'s inner
-    loop (minus eval/checkpoint): actors push trajectories into a bounded queue,
-    the learner drains them into a replay buffer and runs GPU update steps, and
-    fresh weights are broadcast periodically. We separate, in absolute terms:
+    loop (minus eval/checkpoint/idle-schedule): actors push trajectories into a
+    bounded queue, the learner drains them into a replay buffer, batches are
+    sampled + collated on the prefetch thread (when ``prefetch_depth > 0``,
+    matching training), and fresh weights are broadcast periodically. We
+    separate, in absolute terms:
 
       * ``gpu_step_ms``    -- forward+backward on the GPU, measured with cuda sync
-      * ``data_wait_ms``   -- learner idle because the buffer hasn't warmed (the
-                              GPU waiting on the CPU actors)
-      * ``host_ms``        -- draining the queue, sampling, and weight broadcast
+      * ``data_wait_ms``   -- learner idle waiting on data: buffer warmup plus
+                              time blocked on the prefetch queue
+      * ``host_ms``        -- draining the queue, weight broadcast, and (only
+                              with prefetch disabled) inline sample+collate
                               (CPU-side loop overhead that steals from the GPU)
 
     plus throughput (learner steps/s, trajectories/s) and the trajectory-queue
@@ -86,17 +89,24 @@ def measure_training(
     traj_q = ctx.Queue(maxsize=cfg.train.traj_queue_size)
     weight_qs = [ctx.Queue(maxsize=1) for _ in range(n_actors)]
     stop_event = ctx.Event()
+    pause_event = ctx.Event()  # never set here; actor_loop requires it
 
     init_sd = _sd_to_numpy(net)
     procs: List[mp.Process] = []
     for i in range(n_actors):
         p = ctx.Process(
             target=actor_loop,
-            args=(i, init_sd, cfg, traj_q, weight_qs[i], stop_event),
+            args=(i, init_sd, cfg, traj_q, weight_qs[i], stop_event, pause_event),
             daemon=True,
         )
         p.start()
         procs.append(p)
+
+    prefetcher = (
+        BatchPrefetcher(learner, buffer, cfg.train.batch_trajectories,
+                        cfg.train.min_buffer_to_train, cfg.train.prefetch_depth)
+        if cfg.train.prefetch_depth > 0 else None
+    )
 
     # accumulators (seconds), reset when the measurement window opens
     acc = {"gpu": 0.0, "wait": 0.0, "host": 0.0}
@@ -148,14 +158,23 @@ def measure_training(
                 time.sleep(0.02)
                 continue
 
-            # 3) sample (host) then one GPU learner step, timed with device sync
+            # 3) next batch: prefetched (sample+collate overlapped the previous
+            #    GPU step, matching run_async) or built inline when disabled.
+            #    Time blocked on the prefetch queue as data wait: the GPU is
+            #    starved there, whether by actors or by collation throughput.
             t0 = _now()
-            batch = buffer.sample(cfg.train.batch_trajectories)
-            sample_host = _now() - t0
+            if prefetcher is not None:
+                col = prefetcher.get(timeout=1.0)
+                fetch_wait = _now() - t0
+                sample_host = 0.0
+            else:
+                col = learner.collate(buffer.sample(cfg.train.batch_trajectories))
+                fetch_wait = 0.0
+                sample_host = _now() - t0
             _sync(device)              # flush any prior work so we time only this step
             tg = _now()
-            if batch:
-                learner.update(batch)
+            if col is not None:
+                learner.update_collated(col)
             _sync(device)
             gpu = _now() - tg
 
@@ -173,9 +192,11 @@ def measure_training(
             broadcast = _now() - t0
 
             if measuring:
-                steps += 1
+                if col is not None:
+                    steps += 1
                 traj += d
                 acc["gpu"] += gpu
+                acc["wait"] += fetch_wait
                 acc["host"] += host + broadcast + sample_host
                 q_samples += 1
                 frac = occ / qmax if qmax else 0.0
@@ -183,6 +204,8 @@ def measure_training(
                 q_occ_max = max(q_occ_max, frac)
         wall = _now() - measure_start
     finally:
+        if prefetcher is not None:
+            prefetcher.stop()
         stop_event.set()
         for p in procs:
             p.terminate()
@@ -201,6 +224,7 @@ def measure_training(
     return {
         "actors": n_actors,
         "learner": "fast" if variant else "legacy",
+        "prefetch_depth": cfg.train.prefetch_depth,
         "device": str(device),
         "wall_s": round(wall, 2),
         "learner_steps": steps,

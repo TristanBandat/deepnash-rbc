@@ -1,0 +1,137 @@
+<mxfile host="Electron" agent="claude-code">
+  <diagram id="traj-anatomy" name="trajectory-anatomy">
+    <mxGraphModel dx="1656" dy="828" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1450" pageHeight="820" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;fontStyle=1;" value="Anatomy of a trajectory — one player’s decision sequence over one RBC game (replay.py)" vertex="1">
+          <mxGeometry height="30" width="1000" x="40" y="15" as="geometry" />
+        </mxCell>
+        <mxCell id="gameBox" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="one self-play game (LocalGame)&lt;br&gt;both seats played by RNaDPlayer with the SAME network snapshot θ′&lt;br&gt;(stochastic behavior: a ∼ π)" vertex="1">
+          <mxGeometry height="120" width="300" x="40" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontStyle=2;fontColor=#333333;" value="cells:&amp;nbsp;&lt;div&gt;S = sense Step (head 0, 64 actions),&amp;nbsp;&lt;/div&gt;&lt;div&gt;M = move Step (head 1, 4673 actions).&lt;br&gt;2 Steps per turn → a ~40-turn game yields a trajectory of ~80 Steps.&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="340" x="40" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="stepBox" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=10;align=left;spacing=8;" value="Step — one decision record:&lt;br&gt;• obs uint8 [19, 8, 8] — the in-progress frame at this decision (NOT the full history stack)&lt;br&gt;• turn — # committed frames before this decision&lt;br&gt;• head ∈ {SENSE, MOVE}&lt;br&gt;• legal action indices (from reconchess)&lt;br&gt;• action a (sampled)&lt;br&gt;• behavior log-prob log μ(a|s)&lt;br&gt;(no reward field — reward exists only at the trajectory level)" vertex="1">
+          <mxGeometry height="180" width="340" x="1090" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="framesBox" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=10;align=left;spacing=8;" value="Trajectory.frames — deduplicated history:&lt;br&gt;one committed [19, 8, 8] frame per turn, stored ONCE. A Step’s network input = frames[turn−H+1 … turn−1] (blank-padded) + its own obs; the learner rebuilds the [H·19, 8, 8] stacks on-GPU with one gather. Storing full stacks per step scaled trajectory size with H (~1.75 MB at H = 16); deduplicated ≈ 215 KB (~8×)." vertex="1">
+          <mxGeometry height="120" width="340" x="1090" y="265" as="geometry" />
+        </mxCell>
+        <mxCell id="labW" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontStyle=1;" value="White’s trajectory — Steps in decision order" vertex="1">
+          <mxGeometry height="20" width="400" x="430" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="wS1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=12;" value="S" vertex="1">
+          <mxGeometry height="40" width="40" x="430" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="wM1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=12;" value="M" vertex="1">
+          <mxGeometry height="40" width="40" x="470" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="wS2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=12;" value="S" vertex="1">
+          <mxGeometry height="40" width="40" x="530" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="wM2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=12;" value="M" vertex="1">
+          <mxGeometry height="40" width="40" x="570" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="wS3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=12;" value="S" vertex="1">
+          <mxGeometry height="40" width="40" x="630" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="wM3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=12;" value="M" vertex="1">
+          <mxGeometry height="40" width="40" x="670" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="wDots" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=16;" value="⋯" vertex="1">
+          <mxGeometry height="40" width="40" x="730" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="wST" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=12;" value="S" vertex="1">
+          <mxGeometry height="40" width="40" x="790" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="wMT" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=12;" value="M" vertex="1">
+          <mxGeometry height="40" width="40" x="830" y="210" as="geometry" />
+        </mxCell>
+        <mxCell id="zW" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="z_W" vertex="1">
+          <mxGeometry height="50" width="50" x="900" y="205" as="geometry" />
+        </mxCell>
+        <mxCell id="zWnote" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontStyle=2;fontColor=#333333;" value="z ∈ {+1, 0, −1} from this&amp;nbsp;&lt;div&gt;player’s perspective,&amp;nbsp;&lt;/div&gt;&lt;div&gt;set once at game end&lt;/div&gt;" vertex="1">
+          <mxGeometry height="90" width="115" x="965" y="205" as="geometry" />
+        </mxCell>
+        <mxCell id="wT1" parent="1" style="text;html=1;align=center;verticalAlign=top;fontSize=10;fontColor=#333333;" value="turn 1" vertex="1">
+          <mxGeometry height="20" width="80" x="430" y="255" as="geometry" />
+        </mxCell>
+        <mxCell id="wT2" parent="1" style="text;html=1;align=center;verticalAlign=top;fontSize=10;fontColor=#333333;" value="turn 2" vertex="1">
+          <mxGeometry height="20" width="80" x="530" y="255" as="geometry" />
+        </mxCell>
+        <mxCell id="wT3" parent="1" style="text;html=1;align=center;verticalAlign=top;fontSize=10;fontColor=#333333;" value="turn 3" vertex="1">
+          <mxGeometry height="20" width="80" x="630" y="255" as="geometry" />
+        </mxCell>
+        <mxCell id="wTT" parent="1" style="text;html=1;align=center;verticalAlign=top;fontSize=10;fontColor=#333333;" value="turn T" vertex="1">
+          <mxGeometry height="20" width="80" x="790" y="255" as="geometry" />
+        </mxCell>
+        <mxCell id="wRew" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=10;fontColor=#333333;" value="rewards: r_t = 0 for every step … except the last: r_T = z (sparse, terminal only; Steps store no reward)" vertex="1">
+          <mxGeometry height="20" width="620" x="430" y="285" as="geometry" />
+        </mxCell>
+        <mxCell id="eVtrace" edge="1" parent="1" style="endArrow=block;html=1;rounded=0;dashed=1;strokeColor=#666666;fontSize=10;fontColor=#666666;" value="v-trace recurrence runs backward from z (γ = 1: undiscounted credit over ~80 steps)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="920" y="325" as="sourcePoint" />
+            <mxPoint x="430" y="325" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="labB" parent="1" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontStyle=1;" value="Black’s trajectory" vertex="1">
+          <mxGeometry height="20" width="400" x="430" y="390" as="geometry" />
+        </mxCell>
+        <mxCell id="bS1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=12;" value="S" vertex="1">
+          <mxGeometry height="40" width="40" x="430" y="420" as="geometry" />
+        </mxCell>
+        <mxCell id="bM1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=12;" value="M" vertex="1">
+          <mxGeometry height="40" width="40" x="470" y="420" as="geometry" />
+        </mxCell>
+        <mxCell id="bS2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=12;" value="S" vertex="1">
+          <mxGeometry height="40" width="40" x="530" y="420" as="geometry" />
+        </mxCell>
+        <mxCell id="bM2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=12;" value="M" vertex="1">
+          <mxGeometry height="40" width="40" x="570" y="420" as="geometry" />
+        </mxCell>
+        <mxCell id="bDots" parent="1" style="text;html=1;align=center;verticalAlign=middle;fontSize=16;" value="⋯" vertex="1">
+          <mxGeometry height="40" width="40" x="630" y="420" as="geometry" />
+        </mxCell>
+        <mxCell id="bST" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=12;" value="S" vertex="1">
+          <mxGeometry height="40" width="40" x="690" y="420" as="geometry" />
+        </mxCell>
+        <mxCell id="bMT" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=12;" value="M" vertex="1">
+          <mxGeometry height="40" width="40" x="730" y="420" as="geometry" />
+        </mxCell>
+        <mxCell id="zB" parent="1" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" value="z_B" vertex="1">
+          <mxGeometry height="50" width="50" x="800" y="415" as="geometry" />
+        </mxCell>
+        <mxCell id="zBnote" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontStyle=2;fontColor=#333333;" value="z_B = −z_W in decisive games; both 0 on a draw.&amp;nbsp;&lt;div&gt;Lengths may differ from White’s (ragged).&lt;/div&gt;" vertex="1">
+          <mxGeometry height="70" width="215" x="865" y="415" as="geometry" />
+        </mxCell>
+        <mxCell id="bNote" parent="1" style="text;html=1;align=left;verticalAlign=top;fontSize=10;fontStyle=2;fontColor=#333333;" value="same structure as White’s trajectory — enters the buffer as an independent training example" vertex="1">
+          <mxGeometry height="20" width="520" x="430" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="eGW" edge="1" parent="1" source="gameBox" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=1;exitY=0.35;entryX=0;entryY=0.5;" target="wS1" value="White seat">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eGB" edge="1" parent="1" source="gameBox" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#000000;fontSize=10;exitX=1;exitY=0.65;entryX=0;entryY=0.5;" target="bS1" value="Black seat">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eStep" edge="1" parent="1" source="wM2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;dashed=1;exitX=0.5;exitY=0;entryX=0;entryY=0.5;" target="stepBox" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="590" y="150" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="box1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=10;align=left;spacing=8;" value="The trajectory is the atomic unit everywhere:&lt;br&gt;• actor → learner queue transports whole trajectories&lt;br&gt;• replay buffer stores and samples whole trajectories (B = 32)&lt;br&gt;• v-trace needs the intact sequence — the recurrence walks backward from the terminal reward, so trajectories are never fragmented" vertex="1">
+          <mxGeometry height="150" width="420" x="40" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="box2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=10;align=left;spacing=8;" value="Variable length:&lt;br&gt;games end on king capture or clock → ragged trajectory lengths. The fast learner pads a batch to [T_max, B] and runs one vectorized backward recurrence; padding carries ρ = c = δ = 0 and contributes nothing." vertex="1">
+          <mxGeometry height="150" width="420" x="500" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="box3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=10;align=left;spacing=8;fontStyle=0;" value="One shared network for both colors:&lt;br&gt;• no separate White / Black models — both trajectories update the same θ&lt;br&gt;• the board is NOT mirrored for Black: absolute coordinates + a color plane (channel 18) tell the network its seat&lt;br&gt;• once z is assigned, the two trajectories are independent training examples — nothing couples them in the loss&lt;br&gt;• the zero-sum structure enters only through z_W = −z_B" vertex="1">
+          <mxGeometry height="150" width="470" x="960" y="560" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,6 +1,8 @@
 .venv/
 __pycache__/
+.idea/
 .claude/
+**/__marimo__/
 
 # TensorBoard runs (regenerate from metrics JSONL via notebooks/metrics_to_tensorboard.py)
 runs/
@@ -9,4 +11,19 @@ runs/
 **/*.lock
 **/*.jsonl
 **/*.pt
+**/*.zip
+**/*.parquet
+# tournament state must travel between dev and training server (sweep gauntlets
+# read/append it); metrics jsonl and checkpoints stay machine-local
+!results/tournament.jsonl
+
+
+# RBC server credentials (scripts/rc_connect.py)
+.env
+
+# RBC server history
+results/rbc_games/histories/
+
+# Drawio
+**/*.bkp
 

@@ -4,10 +4,12 @@ Training should only run when the rig is allowed to be loud and drawing power.
 ``Config.train`` defines a recurring window; outside it the trainers idle -- the
 async actors are paused and the learner sleeps -- until the window reopens.
 
-The window is ``[train_start_hour, train_stop_hour)`` on the configured weekdays
-and may wrap past midnight (start > stop), so the default 19:00->06:00 on Mon-Fri
-means "train on weekday nights": Friday night runs into Saturday 06:00, then the
-weekend is idle. Hour granularity matches the on-the-hour schedule.
+``train_days`` lists the WORKING days (the ones with the noise constraint): on
+those days training only runs inside ``[train_start_hour, train_stop_hour)``,
+which may wrap past midnight (start > stop). Days not listed have no working
+hours, so training runs around the clock. The default 19:00->06:00 on Mon-Fri
+therefore means "never during weekday working hours": weekday nights and the
+whole weekend train. Hour granularity matches the on-the-hour schedule.
 
 Set ``DEEPNASH_IGNORE_IDLE=1`` to bypass the schedule for a one-off run without
 editing the config.
@@ -36,11 +38,11 @@ def _in_window(cfg: "Config", now: datetime) -> bool:
     stop = cfg.train.train_stop_hour
     days = set(cfg.train.train_days)
     wd, h = now.weekday(), now.hour
-    if start > stop:  # window wraps midnight, e.g. 19 -> 6
-        # evening half on a listed day, or morning half of a window that opened
-        # the previous (listed) day
-        return (wd in days and h >= start) or ((wd - 1) % 7 in days and h < stop)
-    return wd in days and start <= h < stop
+    if wd not in days:
+        return True  # no working hours on this day (e.g. weekend)
+    if start > stop:  # window wraps midnight, e.g. 19 -> 6: quiet only during
+        return h >= start or h < stop  # the working day [stop, start)
+    return start <= h < stop
 
 
 def training_allowed(cfg: "Config", now: Optional[datetime] = None) -> bool:
