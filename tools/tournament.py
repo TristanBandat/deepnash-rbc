@@ -14,12 +14,21 @@ Checkpoint agents play in deployment mode by default: sampled with
 --threshold truncation (see RNaDPlayer.sample_threshold); use --greedy to
 evaluate argmax play instead.
 
+To add a few fresh checkpoints to a big existing ladder without replaying the
+whole O(N^2) field, use --vs-top N: players that have no games yet in --out
+play against the current top-N established players (ranked by Elo from --out),
+every baseline, and each other; established-vs-established pairs are skipped
+entirely.
+
 Examples:
 
     uv run python tools/tournament.py               # everything, auto
     uv run python tools/tournament.py \
         'checkpoints/v0.12.0/*.pt' random trout mht \
         --pair-games 8 --out results/tournament_v12.jsonl
+    uv run python tools/tournament.py --dry-run     # show the schedule size
+    uv run python tools/tournament.py \
+        'checkpoints/v0.13.0/*.pt' --vs-top 20      # new nets vs current top 20
 
 The leaderboard is printed at the end (and can be recomputed any time with
 --leaderboard-only). Elo is anchored so random = 0 when present.
@@ -222,6 +231,12 @@ def main():
     ap.add_argument("--net-cache", type=int, default=8,
                     help="nets kept in memory per worker (LRU)")
     ap.add_argument("--out", default="results/tournament.jsonl")
+    ap.add_argument("--vs-top", type=int, default=None, metavar="N",
+                    help="only schedule players with no games yet in --out "
+                         "against the top-N established players (by Elo from "
+                         "--out); skip established-vs-established pairs")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="print how many games would be played, then exit")
     ap.add_argument("--leaderboard-only", action="store_true",
                     help="recompute the leaderboard from --out and exit")
     args = ap.parse_args()
@@ -235,7 +250,12 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     rows = []
     if out.exists():
-        rows = [json.loads(line) for line in out.read_text().splitlines() if line]
+        try:
+            rows = [json.loads(line) for line in out.read_text().splitlines() if line]
+        except json.JSONDecodeError:
+            sys.exit(f"{out} is not a JSONL results file -- --out expects the "
+                     f"per-game results (e.g. results/tournament.jsonl), not a "
+                     f"rendered leaderboard")
 
     if args.leaderboard_only:
         print_leaderboard(rows, players)
@@ -243,11 +263,51 @@ def main():
 
     # resume: schedule only what is missing per pair
     done = defaultdict(int)
+    opponents = defaultdict(set)
     for r in rows:
         if r["winner"] != "error":
             done[frozenset((r["white"], r["black"]))] += 1
+            opponents[r["white"]].add(r["black"])
+            opponents[r["black"]].add(r["white"])
+
+    # which unordered pairs are eligible for scheduling
+    if args.vs_top is not None:
+        baselines = {n for n in players if n in BASELINES}
+        # Classify "new" players so a stopped run resumes to the same schedule.
+        # A new checkpoint only ever plays anchors (top-N + baselines) or other
+        # new checkpoints, so "every opponent seen so far is an anchor or new"
+        # stays true no matter how many of its games are already recorded --
+        # unlike "has zero games", which flips after the first game. Solve for
+        # it as a fixpoint; the top-N is fit from established-vs-established
+        # games only (bradley_terry ignores games touching a player outside its
+        # name list), so the anchor set does not drift as new games land.
+        new = {n for n in players if not opponents[n]}
+        top: list[str] = []
+        while True:
+            established = [n for n in players if n not in new]
+            if not established:
+                sys.exit("--vs-top needs existing results in --out to rank opponents")
+            elo = bradley_terry(rows, established)
+            top = sorted(established, key=lambda n: -elo[n])[:args.vs_top]
+            anchors = (set(top) | baselines) - new
+            grown = {n for n in players
+                     if opponents[n] and opponents[n] <= (anchors | new)}
+            if grown <= new:
+                break
+            new |= grown
+        # new checkpoints play the top-N, every baseline, and each other
+        if not new:
+            print("--vs-top: no new players (all already have games in --out)")
+        print(f"--vs-top {args.vs_top}: {len(new)} new player(s) vs "
+              f"{len(anchors)} anchors (top-{len(top)} + baselines) "
+              f"and each other")
+        pairs = [(a, b) for a in new for b in anchors]
+        pairs += list(combinations(new, 2))
+    else:
+        pairs = list(combinations(players, 2))
+
     tasks = []
-    for a, b in combinations(players, 2):
+    for a, b in pairs:
         have = done[frozenset((a, b))]
         for g in range(have, args.pair_games):
             white, black = (a, b) if g % 2 == 0 else (b, a)
@@ -259,6 +319,9 @@ def main():
     print(f"{len(players)} players, {len(tasks)} games to play "
           f"({engine} vs engine bots, ~30-60s each; rest are fast) "
           f"({len(rows)} already in {out})")
+
+    if args.dry_run:
+        return
 
     if tasks:
         ctx = mp.get_context("spawn")
