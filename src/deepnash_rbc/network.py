@@ -149,7 +149,10 @@ class _TransformerMixer(nn.Module):
         layer = nn.TransformerEncoderLayer(
             dim, nhead, dim_feedforward=4 * dim, dropout=0.0, batch_first=False
         )
-        self.enc = nn.TransformerEncoder(layer, layers)
+        # enable_nested_tensor is a batch_first-only padding-skip optimization;
+        # with batch_first=False PyTorch disables it at runtime anyway, so set it
+        # explicitly to match reality and silence the spurious startup warning.
+        self.enc = nn.TransformerEncoder(layer, layers, enable_nested_tensor=False)
         self.register_buffer("pos", self._sinusoidal(max_seq, dim), persistent=False)
 
     @staticmethod
