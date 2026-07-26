@@ -199,7 +199,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(prog="deepnash-smoke")
     ap.add_argument(
         "--arch",
-        choices=("resnet", "gru", "lstm", "transformer", "all"),
+        choices=("resnet", "gru", "lstm", "transformer", "xlstm", "all"),
         default="resnet",
         help="Architecture(s) to exercise. 'all' runs every arch (slower). "
         "Default: resnet.",
@@ -214,7 +214,7 @@ def main() -> None:
     )
     args = ap.parse_args()
     archs = (
-        ("resnet", "gru", "lstm", "transformer") if args.arch == "all" else (args.arch,)
+        ("resnet", "gru", "lstm", "transformer", "xlstm") if args.arch == "all" else (args.arch,)
     )
     device = torch.device("cpu")
     torch.manual_seed(0)

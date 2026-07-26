@@ -141,11 +141,12 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--arch",
-        choices=("resnet", "gru", "lstm", "transformer"),
+        choices=("resnet", "gru", "lstm", "transformer", "xlstm"),
         default=None,
         help="Network architecture (NetworkConfig.arch). 'resnet' is the original "
-        "channel-stacked ResNet; gru/lstm/transformer are whole-game streaming-state "
-        "models that ignore --history. Shape/arch-locked to existing checkpoints, so "
+        "channel-stacked ResNet; gru/lstm/transformer/xlstm are whole-game "
+        "streaming-state models that ignore --history. Shape/arch-locked to existing "
+        "checkpoints, so "
         "bump the version in pyproject.toml when switching. Default: config value. "
         "Temporal knobs (mixer_dim, mixer_layers, enc_blocks, nhead, max_seq) are set "
         "via --set network.<field>=<value>.",

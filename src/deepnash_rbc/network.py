@@ -186,6 +186,74 @@ class _TransformerMixer(nn.Module):
         return out[-1], buf  # last position is the current step's context
 
 
+def _build_xlstm_stack(dim, num_blocks, num_heads, max_seq, slstm_at, conv_kernel):
+    """Construct an NX-AI ``xLSTMBlockStack`` of alternating mLSTM/sLSTM blocks.
+
+    Imported lazily (only when arch=="xlstm") so the other archs never pay the
+    import cost. The xlstm package touches ``torch.utils.cpp_extension`` at import
+    time whenever CUDA is visible (to locate the sLSTM CUDA kernel), which raises if
+    CUDA_HOME is unset -- so set a harmless placeholder first. We never compile the
+    kernel: the sLSTM ``backend="vanilla"`` (pure-PyTorch) path keeps the forward
+    deterministic and CPU-runnable, preserving the train==act / fast==legacy
+    guarantees; the placeholder is only consulted by the (unused) CUDA compiler.
+    """
+    import os
+
+    os.environ.setdefault("CUDA_HOME", "/nonexistent/xlstm-vanilla-backend-no-cuda")
+    from xlstm import (
+        xLSTMBlockStack, xLSTMBlockStackConfig,
+        mLSTMBlockConfig, mLSTMLayerConfig,
+        sLSTMBlockConfig, sLSTMLayerConfig, FeedForwardConfig,
+    )
+
+    cfg = xLSTMBlockStackConfig(
+        mlstm_block=mLSTMBlockConfig(
+            mlstm=mLSTMLayerConfig(num_heads=num_heads, conv1d_kernel_size=conv_kernel),
+        ),
+        slstm_block=sLSTMBlockConfig(
+            slstm=sLSTMLayerConfig(
+                num_heads=num_heads, backend="vanilla",
+                conv1d_kernel_size=conv_kernel, dropout=0.0,
+            ),
+            feedforward=FeedForwardConfig(proj_factor=1.3, act_fn="gelu", dropout=0.0),
+        ),
+        num_blocks=num_blocks, embedding_dim=dim, context_length=max_seq,
+        slstm_at=list(slstm_at), dropout=0.0, bias=True,
+    )
+    return xLSTMBlockStack(cfg)
+
+
+class _XLSTMMixer(nn.Module):
+    """Full xLSTM stack (alternating mLSTM/sLSTM blocks, NX-AI package) over the
+    token sequence. Pure-PyTorch 'vanilla' backend + dropout=0 keep the forward
+    deterministic and CPU-runnable (train==act, fast==legacy guarantees)."""
+
+    def __init__(self, dim, num_blocks, num_heads, max_seq, slstm_at, conv_kernel):
+        super().__init__()
+        self.max_seq = max_seq
+        self.stack = _build_xlstm_stack(
+            dim, num_blocks, num_heads, max_seq, slstm_at, conv_kernel
+        )
+
+    def sequence(self, tok: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        # xLSTM is causal and batch_first; like _RecurrentMixer the padded tail steps
+        # are causally after every real step, so their outputs are discarded by the
+        # flat<->[T,B] gather and no explicit mask is needed.
+        t = tok.shape[0]
+        assert t <= self.max_seq, f"sequence length {t} exceeds max_seq {self.max_seq}"
+        return self.stack(tok.transpose(0, 1)).transpose(0, 1)  # [T,B,D]
+
+    def step(self, tok: torch.Tensor, state):
+        # buffer-reuse (as _TransformerMixer.step) for exact train==act parity: keep
+        # the growing token buffer and re-run the causal stack, returning the last
+        # position. Cheap because RBC games are short and acting is one game at a time.
+        buf = tok.unsqueeze(0) if state is None else torch.cat([state, tok.unsqueeze(0)], 0)
+        t = buf.shape[0]
+        assert t <= self.max_seq, f"sequence length {t} exceeds max_seq {self.max_seq}"
+        out = self.stack(buf.transpose(0, 1)).transpose(0, 1)
+        return out[-1], buf
+
+
 class TemporalNet(nn.Module):
     is_temporal = True
 
@@ -208,6 +276,11 @@ class TemporalNet(nn.Module):
         # temporal mixer over tokens
         if net.arch in ("gru", "lstm"):
             self.mixer = _RecurrentMixer(d, net.mixer_layers, net.arch)
+        elif net.arch == "xlstm":
+            self.mixer = _XLSTMMixer(
+                d, net.mixer_layers, net.nhead, net.max_seq,
+                net.xlstm_slstm_at, net.xlstm_conv_kernel,
+            )
         else:
             self.mixer = _TransformerMixer(d, net.nhead, net.mixer_layers, net.max_seq)
 
@@ -280,14 +353,15 @@ def make_net(enc: EncodingConfig, net: NetworkConfig) -> nn.Module:
     """Build the network selected by ``net.arch``.
 
     ``resnet`` -> the original channel-stacked :class:`DeepNashNet`.
-    ``gru`` / ``lstm`` / ``transformer`` -> the whole-game streaming-state
-    :class:`TemporalNet`, whose mixer is chosen by the same ``arch`` string.
+    ``gru`` / ``lstm`` / ``transformer`` / ``xlstm`` -> the whole-game
+    streaming-state :class:`TemporalNet`, whose mixer is chosen by the same
+    ``arch`` string.
     """
     if net.arch == "resnet":
         return DeepNashNet(enc, net)
-    if net.arch in ("gru", "lstm", "transformer"):
+    if net.arch in ("gru", "lstm", "transformer", "xlstm"):
         return TemporalNet(enc, net)
     raise ValueError(
         f"unknown network.arch {net.arch!r} "
-        "(expected one of: resnet, gru, lstm, transformer)"
+        "(expected one of: resnet, gru, lstm, transformer, xlstm)"
     )

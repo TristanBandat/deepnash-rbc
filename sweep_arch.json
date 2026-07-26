@@ -9,6 +9,8 @@
     "network.mixer_layers": 2,
     "network.nhead": 4,
     "network.max_seq": 512,
+    "network.xlstm_slstm_at": [1],
+    "network.xlstm_conv_kernel": 4,
     "rnad.eta": 0.5,
     "rnad.iteration_steps": 1000,
     "rnad.gamma": 1.0,
