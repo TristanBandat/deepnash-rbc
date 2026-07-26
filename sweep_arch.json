@@ -1,5 +1,5 @@
 {
-  "_comment": "Architecture-comparison / retune campaign for the temporal nets (gru/lstm/transformer). Run with: uv run python scripts/train_campaign.py --sweep sweep_arch.json [--dry-run]. Each run auto-versions into its own checkpoints/v<version>/ and is gauntleted (tournament block) against the baselines + existing resnet incumbents, so cross-arch comparison is built in. defaults set history=1 (temporal archs ignore stacked history) and pin the temporal knobs; each run overrides only network.arch + the one knob it varies. The R-NaD knobs (lr, eta, neurd_clip) were tuned for the ResNet, so the lr/eta variants below are the retune axis. Screening at 80k to match the canonical horizon; drop total_iters for a faster first pass.",
+  "_comment": "xLSTM retune campaign. The gru/lstm/transformer arch screen is already done (v0.38-v0.47); this sweep is the xLSTM follow-up. Run with: uv run python scripts/train_campaign.py --sweep sweep_arch.json [--dry-run]. Each run auto-versions into checkpoints/v<version>/ and is gauntleted (tournament block) against baselines + resnet/temporal incumbents, so it slots into the same Elo ladder. defaults set history=1 (temporal archs ignore stacked history) and pin the temporal + xlstm knobs; each run overrides network.arch=xlstm plus the knobs it varies. Design assumptions from the 80k Elo of the other archs: (a) lr=1e-4 beat the ResNet-tuned 5e-5 by ~+97 Elo for BOTH gru (592->688) and transformer (737->834, best temporal net), so we transfer it and use it as the base for the exploration axes; (b) eta=0.2 was mixed (helped gru, hurt transformer) -> one symmetry probe; (c) extra mixer depth was arch-dependent (helped gru +98, hurt transformer -228) -> one risky native-depth probe. The xLSTM-specific axis is the mLSTM/sLSTM composition (network.xlstm_slstm_at): since transformer (~ mLSTM parallel matrix-memory) beat gru (~ sLSTM gated recurrence), we sweep all-mLSTM (fastest on the vanilla sLSTM backend) vs mixed vs all-sLSTM. Screening at 80k to match the canonical horizon.",
   "defaults": {
     "encoding.history": 1,
     "network.channels": 128,
@@ -50,30 +50,29 @@
     "train.prefetch_depth": 2
   },
   "runs": [
-    { "name": "arch-gru-base", "bump": "minor",
-      "overrides": { "network.arch": "gru" } },
-    { "name": "arch-lstm-base", "bump": "minor",
-      "overrides": { "network.arch": "lstm" } },
-    { "name": "arch-transformer-base", "bump": "minor",
-      "overrides": { "network.arch": "transformer" } },
+    { "_comment": "Control: canonical ResNet-tuned lr=5e-5, default 2-block [mLSTM, sLSTM] stack. Reference point for the lr transfer.",
+      "name": "arch-xlstm-base", "bump": "minor",
+      "overrides": { "network.arch": "xlstm" } },
 
-    { "name": "arch-gru-lr1e4", "bump": "minor",
-      "overrides": { "network.arch": "gru", "rnad.lr": 1e-4 } },
-    { "name": "arch-transformer-lr1e4", "bump": "minor",
-      "overrides": { "network.arch": "transformer", "rnad.lr": 1e-4 } },
+    { "_comment": "lr transfer: the +97-Elo win seen on gru AND transformer. Highest-confidence single bet; also the base lr for the exploration variants below.",
+      "name": "arch-xlstm-lr1e4", "bump": "minor",
+      "overrides": { "network.arch": "xlstm", "rnad.lr": 1e-4 } },
 
-    { "name": "arch-gru-eta0.2", "bump": "minor",
-      "overrides": { "network.arch": "gru", "rnad.eta": 0.2 } },
-    { "name": "arch-transformer-eta0.2", "bump": "minor",
-      "overrides": { "network.arch": "transformer", "rnad.eta": 0.2 } },
+    { "_comment": "All-mLSTM (slstm_at=[] -> 2 mLSTM blocks): the most transformer-like, fully parallel matrix-memory variant, and the fastest on the vanilla sLSTM backend. Tests whether mLSTM's transformer-like memory drives xLSTM here.",
+      "name": "arch-xlstm-mlstm", "bump": "minor",
+      "overrides": { "network.arch": "xlstm", "rnad.lr": 1e-4, "network.xlstm_slstm_at": [] } },
 
-    { "name": "arch-gru-mixer3L", "bump": "minor",
-      "overrides": { "network.arch": "gru", "network.mixer_layers": 3 } },
-    { "name": "arch-transformer-3L", "bump": "minor",
-      "overrides": { "network.arch": "transformer", "network.mixer_layers": 3 } },
+    { "_comment": "All-sLSTM (slstm_at=[0,1] -> 2 sLSTM blocks): the recurrent, gated-memory extreme. Opposite pole from -mlstm; brackets the composition axis at the transferred lr.",
+      "name": "arch-xlstm-slstm", "bump": "minor",
+      "overrides": { "network.arch": "xlstm", "rnad.lr": 1e-4, "network.xlstm_slstm_at": [0, 1] } },
 
-    { "name": "arch-gru-enc3", "bump": "minor",
-      "overrides": { "network.arch": "gru", "network.enc_blocks": 3 } }
+    { "_comment": "Deeper native stack: 4 blocks, paper-style alternation [mLSTM, sLSTM, mLSTM, sLSTM]. Depth was arch-dependent for the other nets (helped gru, hurt transformer); xLSTM is a native deep-block arch, so one probe.",
+      "name": "arch-xlstm-4L", "bump": "minor",
+      "overrides": { "network.arch": "xlstm", "rnad.lr": 1e-4, "network.mixer_layers": 4, "network.xlstm_slstm_at": [1, 3] } },
+
+    { "_comment": "Regularization symmetry probe: eta=0.2 vs the canonical 0.5, holding the transferred lr. eta was mixed on the other archs.",
+      "name": "arch-xlstm-eta0.2", "bump": "minor",
+      "overrides": { "network.arch": "xlstm", "rnad.lr": 1e-4, "rnad.eta": 0.2 } }
   ],
   "tournament": {
     "pair_games": 8,
