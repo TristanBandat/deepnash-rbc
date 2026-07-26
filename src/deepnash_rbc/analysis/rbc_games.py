@@ -59,17 +59,30 @@ VERSION_CHECKPOINTS = {
     4: "v0.27.0_80000",
     5: "v0.13.0_70000",
     6: "v0.33.0_240000",
+    7: "v0.40.0_80000",
+    8: "v0.42.0_80000",
 }
 
-WIN_REASONS = {1: "KING_CAPTURE", 2: "TIMEOUT", 3: "RESIGN", 4: "TURN_LIMIT", None: "UNFINISHED"}
+WIN_REASONS = {
+    1: "KING_CAPTURE",
+    2: "TIMEOUT",
+    3: "RESIGN",
+    4: "TURN_LIMIT",
+    None: "UNFINISHED",
+}
 
 PIECE_VALUES = {
-    chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
-    chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 0,
+    chess.PAWN: 1,
+    chess.KNIGHT: 3,
+    chess.BISHOP: 3,
+    chess.ROOK: 5,
+    chess.QUEEN: 9,
+    chess.KING: 0,
 }
 
 
 # --------------------------------------------------------------- downloading
+
 
 def read_env(path: Path = REPO_ROOT / ".env") -> dict:
     env = {}
@@ -89,8 +102,12 @@ def make_session() -> requests.Session:
     return session
 
 
-def scan_games(session: requests.Session, since: str, username: Optional[str] = USERNAME,
-               max_pages: int = 5000) -> list[dict]:
+def scan_games(
+    session: requests.Session,
+    since: str,
+    username: Optional[str] = USERNAME,
+    max_pages: int = 5000,
+) -> list[dict]:
     """Collect metadata for all games since ``since``.
 
     ``username`` filters to games involving that bot; pass ``username=None`` to
@@ -108,7 +125,10 @@ def scan_games(session: requests.Session, since: str, username: Optional[str] = 
         if not games:
             break
         for g in games:
-            if username is None or username in (g["white_username"], g["black_username"]):
+            if username is None or username in (
+                g["white_username"],
+                g["black_username"],
+            ):
                 ours.append(g)
         if min(g["time_created"] for g in games) < since:
             break
@@ -116,9 +136,13 @@ def scan_games(session: requests.Session, since: str, username: Optional[str] = 
     return [g for g in ours if g["time_created"] >= since]
 
 
-def sync(cache_dir: Path = DEFAULT_CACHE, since: str = "2026-07-06",
-         username: Optional[str] = USERNAME, max_histories: Optional[int] = None,
-         progress: bool = True) -> list[dict]:
+def sync(
+    cache_dir: Path = DEFAULT_CACHE,
+    since: str = "2026-07-06",
+    username: Optional[str] = USERNAME,
+    max_histories: Optional[int] = None,
+    progress: bool = True,
+) -> list[dict]:
     """Refresh the local cache and return the merged game index (newest first).
 
     ``username=None`` caches *all* server games (see :func:`scan_games`).
@@ -143,8 +167,11 @@ def sync(cache_dir: Path = DEFAULT_CACHE, since: str = "2026-07-06",
         if not (known.get(meta["game_id"], {}).get("finished")):
             known[meta["game_id"]] = meta
 
-    missing = [g for g in known.values()
-               if g["finished"] and not (hist_dir / f"{g['game_id']}.json").exists()]
+    missing = [
+        g
+        for g in known.values()
+        if g["finished"] and not (hist_dir / f"{g['game_id']}.json").exists()
+    ]
     if max_histories is not None:
         missing = missing[:max_histories]
     for i, meta in enumerate(missing):
@@ -171,7 +198,9 @@ def load_index(cache_dir: Path = DEFAULT_CACHE) -> list[dict]:
     return [json.loads(l) for l in index_path.read_text().splitlines()]
 
 
-def load_history(game_id: int, cache_dir: Path = DEFAULT_CACHE) -> Optional[GameHistory]:
+def load_history(
+    game_id: int, cache_dir: Path = DEFAULT_CACHE
+) -> Optional[GameHistory]:
     path = cache_dir / "histories" / f"{game_id}.json"
     if not path.exists():
         return None
@@ -180,8 +209,13 @@ def load_history(game_id: int, cache_dir: Path = DEFAULT_CACHE) -> Optional[Game
 
 # ------------------------------------------------------- full-corpus archive
 
-def download_archive(dest: Path = DEFAULT_ARCHIVE, url: str = ARCHIVE_URL,
-                     progress: bool = True, chunk: int = 1 << 20) -> Path:
+
+def download_archive(
+    dest: Path = DEFAULT_ARCHIVE,
+    url: str = ARCHIVE_URL,
+    progress: bool = True,
+    chunk: int = 1 << 20,
+) -> Path:
     """Download the server's full game-log zip, resuming a partial file.
 
     The archive is ~1.3 GB (hundreds of thousands of ``<game_id>.json``
@@ -224,9 +258,11 @@ def download_archive(dest: Path = DEFAULT_ARCHIVE, url: str = ARCHIVE_URL,
                             pct = f" ({got / total:.0%})" if total else ""
                             print(f"  downloaded {got / 1e9:.2f} GB{pct}")
                             next_mark += 64 << 20
-        except (requests.exceptions.ChunkedEncodingError,
-                requests.exceptions.ConnectionError,
-                requests.exceptions.Timeout) as err:
+        except (
+            requests.exceptions.ChunkedEncodingError,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        ) as err:
             if not total:
                 raise  # cannot tell progress from truncation without a size
             stalled = stalled + 1 if got <= before else 0
@@ -243,8 +279,12 @@ def download_archive(dest: Path = DEFAULT_ARCHIVE, url: str = ARCHIVE_URL,
     return dest
 
 
-def iter_archive(zip_path: Path = DEFAULT_ARCHIVE, limit: Optional[int] = None,
-                 sample: Optional[int] = None, seed: int = 0):
+def iter_archive(
+    zip_path: Path = DEFAULT_ARCHIVE,
+    limit: Optional[int] = None,
+    sample: Optional[int] = None,
+    seed: int = 0,
+):
     """Yield ``(game_id, history_dict)`` for games in the archive zip.
 
     Reads members directly from the zip -- no extraction of the ~800k files.
@@ -311,9 +351,14 @@ def _archive_scan_chunk(names: list[str]) -> list[dict]:
     return [_archive_row(n, _worker_zip.read(n)) for n in names]
 
 
-def archive_frame(zip_path: Path = DEFAULT_ARCHIVE, sample: Optional[int] = None,
-                  seed: int = 0, workers: Optional[int] = None,
-                  refresh: bool = False, progress: bool = False):
+def archive_frame(
+    zip_path: Path = DEFAULT_ARCHIVE,
+    sample: Optional[int] = None,
+    seed: int = 0,
+    workers: Optional[int] = None,
+    refresh: bool = False,
+    progress: bool = False,
+):
     """One flat stats row per archived game, as a polars DataFrame.
 
     Scans the zip once in parallel (JSON parsing dominates, so worker
@@ -331,8 +376,11 @@ def archive_frame(zip_path: Path = DEFAULT_ARCHIVE, sample: Optional[int] = None
 
     zip_path = Path(zip_path)
     cache = zip_path.with_suffix(".parquet")
-    if (not refresh and cache.exists()
-            and cache.stat().st_mtime >= zip_path.stat().st_mtime):
+    if (
+        not refresh
+        and cache.exists()
+        and cache.stat().st_mtime >= zip_path.stat().st_mtime
+    ):
         df = pl.read_parquet(cache)
         if sample is not None and sample < df.height:
             df = df.sample(sample, seed=seed)
@@ -345,10 +393,11 @@ def archive_frame(zip_path: Path = DEFAULT_ARCHIVE, sample: Optional[int] = None
         names = random.Random(seed).sample(names, sample)
 
     workers = workers or min(16, os.cpu_count() or 1)
-    chunks = [names[i:i + 2000] for i in range(0, len(names), 2000)]
+    chunks = [names[i : i + 2000] for i in range(0, len(names), 2000)]
     rows: list[dict] = []
-    with ProcessPoolExecutor(workers, initializer=_archive_worker_init,
-                             initargs=(str(zip_path),)) as ex:
+    with ProcessPoolExecutor(
+        workers, initializer=_archive_worker_init, initargs=(str(zip_path),)
+    ) as ex:
         for part in ex.map(_archive_scan_chunk, chunks):
             rows.extend(part)
             if progress and len(rows) % 100_000 < 2000:
@@ -361,6 +410,7 @@ def archive_frame(zip_path: Path = DEFAULT_ARCHIVE, sample: Optional[int] = None
 
 # --------------------------------------------------------------- featurizing
 
+
 def _material(board: chess.Board, color: chess.Color) -> int:
     return sum(len(board.pieces(pt, color)) * v for pt, v in PIECE_VALUES.items())
 
@@ -372,20 +422,33 @@ def game_features(meta: dict, history: Optional[GameHistory]) -> dict:
     row = {
         "game_id": meta["game_id"],
         "time_created": meta["time_created"],
-        "version_id": meta["white_version_id"] if us_white else meta["black_version_id"],
+        "version_id": meta["white_version_id"]
+        if us_white
+        else meta["black_version_id"],
         "opponent": meta["black_username"] if us_white else meta["white_username"],
-        "opponent_version": meta["black_version_id"] if us_white else meta["white_version_id"],
+        "opponent_version": meta["black_version_id"]
+        if us_white
+        else meta["white_version_id"],
         "color": "white" if us_white else "black",
         "finished": meta["finished"],
-        "won": None if meta.get("winner_color") is None else meta["winner_color"] == us_white,
-        "win_reason": WIN_REASONS.get(meta.get("win_reason"), str(meta.get("win_reason"))),
+        "won": None
+        if meta.get("winner_color") is None
+        else meta["winner_color"] == us_white,
+        "win_reason": WIN_REASONS.get(
+            meta.get("win_reason"), str(meta.get("win_reason"))
+        ),
     }
-    row["checkpoint"] = VERSION_CHECKPOINTS.get(row["version_id"], f"V{row['version_id']}")
+    row["checkpoint"] = VERSION_CHECKPOINTS.get(
+        row["version_id"], f"V{row['version_id']}"
+    )
     if meta.get("time_finished") and meta.get("time_created"):
         t0, t1 = meta["time_created"], meta["time_finished"]
         fmt = "%Y-%m-%d %H:%M:%S"
         from datetime import datetime
-        row["duration_s"] = (datetime.strptime(t1, fmt) - datetime.strptime(t0, fmt)).total_seconds()
+
+        row["duration_s"] = (
+            datetime.strptime(t1, fmt) - datetime.strptime(t0, fmt)
+        ).total_seconds()
 
     if history is None:
         return row
@@ -399,10 +462,14 @@ def game_features(meta: dict, history: Optional[GameHistory]) -> dict:
     taken = [history.taken_move(t) for t in our_turns]
     row["pass_rate"] = sum(m is None for m in requested) / max(len(requested), 1)
     # requested a move but something else happened (slide/blocked/illegal)
-    row["bumped_rate"] = sum(r is not None and r != t for r, t in zip(requested, taken)) / max(len(requested), 1)
+    row["bumped_rate"] = sum(
+        r is not None and r != t for r, t in zip(requested, taken)
+    ) / max(len(requested), 1)
 
     row["captures_made"] = sum(history.capture_square(t) is not None for t in our_turns)
-    row["captures_suffered"] = sum(history.capture_square(t) is not None for t in their_turns)
+    row["captures_suffered"] = sum(
+        history.capture_square(t) is not None for t in their_turns
+    )
 
     # sense usefulness: fraction of our senses that saw >= 1 opponent piece
     senses = list(history.turns(us))
@@ -431,7 +498,9 @@ def game_features(meta: dict, history: Optional[GameHistory]) -> dict:
     return row
 
 
-def features_frame(cache_dir: Path = DEFAULT_CACHE, rows: Optional[Iterable[dict]] = None):
+def features_frame(
+    cache_dir: Path = DEFAULT_CACHE, rows: Optional[Iterable[dict]] = None
+):
     """All cached games as a pandas DataFrame of feature rows (needs pandas)."""
     import pandas as pd
 
@@ -442,25 +511,48 @@ def features_frame(cache_dir: Path = DEFAULT_CACHE, rows: Optional[Iterable[dict
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--since", default="2026-07-06",
-                    help="scan server games back to this ISO date (default: first bench)")
-    ap.add_argument("--cache", type=Path, default=None,
-                    help="cache dir (defaults to results/rbc_games, or "
-                         "results/rbc_games_all with --all)")
-    ap.add_argument("--all", action="store_true",
-                    help="cache EVERY server game, not just ours (cross-bot stats)")
-    ap.add_argument("--max-histories", type=int, default=None,
-                    help="cap game-history downloads per run (safety valve for --all)")
-    ap.add_argument("--archive", action="store_true",
-                    help="download the full-corpus game-log zip instead of scanning the API")
+    ap.add_argument(
+        "--since",
+        default="2026-07-06",
+        help="scan server games back to this ISO date (default: first bench)",
+    )
+    ap.add_argument(
+        "--cache",
+        type=Path,
+        default=None,
+        help="cache dir (defaults to results/rbc_games, or "
+        "results/rbc_games_all with --all)",
+    )
+    ap.add_argument(
+        "--all",
+        action="store_true",
+        help="cache EVERY server game, not just ours (cross-bot stats)",
+    )
+    ap.add_argument(
+        "--max-histories",
+        type=int,
+        default=None,
+        help="cap game-history downloads per run (safety valve for --all)",
+    )
+    ap.add_argument(
+        "--archive",
+        action="store_true",
+        help="download the full-corpus game-log zip instead of scanning the API",
+    )
     args = ap.parse_args()
     if args.archive:
         path = download_archive(args.cache or DEFAULT_ARCHIVE)
         print(f"archive: {path}")
         return
-    cache = args.cache or (REPO_ROOT / "results" / "rbc_games_all" if args.all else DEFAULT_CACHE)
-    rows = sync(cache, since=args.since, username=None if args.all else USERNAME,
-                max_histories=args.max_histories)
+    cache = args.cache or (
+        REPO_ROOT / "results" / "rbc_games_all" if args.all else DEFAULT_CACHE
+    )
+    rows = sync(
+        cache,
+        since=args.since,
+        username=None if args.all else USERNAME,
+        max_histories=args.max_histories,
+    )
     finished = sum(r["finished"] for r in rows)
     print(f"index: {len(rows)} games ({finished} finished) -> {cache / 'index.jsonl'}")
 
