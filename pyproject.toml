@@ -11,6 +11,8 @@ dependencies = [
   "tqdm>=4.66",
   "reconchess-tools>=0.2.1",
   "xlstm>=2.0.5",
+  "marimo>=0.23.16",
+  "polars>=1.43.2",
 ]
 
 [project.optional-dependencies]
