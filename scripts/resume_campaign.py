@@ -32,25 +32,25 @@ counter from the checkpoint's step, so a run saved at step 80k with
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-# Reuse the campaign's config-flattening / version-writing machinery so the two
-# scripts stay in lock-step on what "a sweepable param" is and how pyproject is
-# edited.
+# Reuse the campaign's resume machinery so the two entry points stay in lock-step
+# on what "a sweepable param" is, how a pinned config is replayed, and how
+# pyproject is edited. This script is just a convenience CLI for ad-hoc single
+# runs; the sweep manifest (train_campaign.py --sweep, "resume" key) is the
+# general path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from train_campaign import (  # noqa: E402
     CHECKPOINTS,
     PYPROJECT,
-    all_params,
-    fmt_set_value,
+    pinned_flat,
+    resume_step,
+    set_args,
     write_version,
 )
-
-from deepnash_rbc.checkpoints import find_latest_checkpoint  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -66,40 +66,14 @@ IGNORE_IDLE = True
 
 
 def config_overrides(version: str, total_iters: int) -> list[str]:
-    """`--set` args replaying a version's saved config, with the new horizon.
+    """`--set` args replaying a version's pinned config, with the new horizon.
 
-    Reads ``checkpoints/v<version>/config.json`` and emits every *sweepable*
-    param as ``--set section.field=value`` (non-sweepable/derived fields -- action
-    counts, frame channels, metrics/checkpoint paths -- are skipped), then forces
-    ``train.total_iters`` to the requested horizon.
+    Replays every *sweepable* param from ``checkpoints/<version>/config.json``
+    (via ``pinned_flat``) and forces ``train.total_iters`` to the requested
+    horizon -- the one thing we change. ``version`` is the ``v``-prefixed dir name.
     """
-    cfg_path = CHECKPOINTS / version / "config.json"
-    if not cfg_path.exists():
-        sys.exit(f"[resume] no config.json for {version} at {cfg_path}")
-    cfg = json.loads(cfg_path.read_text())
-
-    valid = set(all_params())
-    flat = {
-        f"{section}.{field}": value
-        for section, sub in cfg.items()
-        for field, value in sub.items()
-        if f"{section}.{field}" in valid
-    }
-    flat["train.total_iters"] = total_iters  # the one thing we change
-
-    args: list[str] = []
-    for key, value in flat.items():
-        args += ["--set", f"{key}={fmt_set_value(value)}"]
-    return args
-
-
-def resume_step(version: str) -> int | None:
-    """Learner step of the checkpoint ``--resume auto`` would pick, or None."""
-    latest = find_latest_checkpoint(str(CHECKPOINTS), version=version[1:])
-    if latest is None:
-        return None
-    stem = Path(latest).stem  # deepnash_async_v0.43.0_80000
-    return int(stem.rsplit("_", 1)[1])
+    merged = {**pinned_flat(version[1:]), "train.total_iters": total_iters}
+    return set_args(merged)
 
 
 def main() -> None:
@@ -130,7 +104,7 @@ def main() -> None:
     # Validate targets and their resume points up front.
     plan = []
     for version in args.versions:
-        step = resume_step(version)
+        step = resume_step(version[1:])
         if step is None:
             sys.exit(f"[resume] {version}: no checkpoint to resume from in "
                      f"{CHECKPOINTS / version}")

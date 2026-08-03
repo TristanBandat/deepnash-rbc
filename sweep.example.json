@@ -66,6 +66,13 @@
       "overrides": {
         "rnad.iteration_steps": 2000
       }
+    },
+    {
+      "name": "example-resume-to-240k",
+      "resume": "v0.0.0",
+      "overrides": {
+        "train.total_iters": 240000
+      }
     }
   ],
   "tournament": {

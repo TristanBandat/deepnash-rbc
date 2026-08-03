@@ -13,9 +13,13 @@ Two ways to define the campaign:
    Manifest structure::
 
        {
-         "defaults":   {"encoding.history": 16, ...},   # applied to every run
+         "defaults":   {"encoding.history": 16, ...},   # applied to every FRESH run
          "runs": [
+           # fresh run: auto-versioned into a new v<version>/ folder
            {"name": "eta-0.3", "bump": "minor", "overrides": {"rnad.eta": 0.3}},
+           # resume run: continue an existing folder to a new horizon
+           {"name": "extend-gru", "resume": "v0.43.0",
+            "overrides": {"train.total_iters": 300000}},
            ...
          ],
          "tournament": {                # after each run (omit to disable)
@@ -35,6 +39,16 @@ Two ways to define the campaign:
    appended to the shared tournament JSONL), and if "keep_top" is set, all but
    the run's best N checkpoints are DELETED to keep storage bounded
    (config.json and metrics are always kept).
+
+   A run with a "resume": "v<version>" key CONTINUES that existing run in place
+   instead of starting fresh: it points the project version at that folder,
+   resumes from its latest checkpoint (deepnash-train-async --resume auto), and
+   trains on to the "train.total_iters" set in the run's "overrides" (each resume
+   thus gets its OWN horizon). A resume replays that version's pinned config.json
+   as its base -- so its "overrides" carry only what to change, "defaults" and
+   "bump" do NOT apply, and architecture keys (network.*/encoding.*) are rejected
+   because a folder's checkpoints are shape-locked. Resumes already at/past their
+   horizon are skipped.
 
 2. Legacy: edit ``RUNS`` below; each entry is (bump_level, [extra CLI args])
    passed straight to deepnash-train-async.
@@ -56,10 +70,14 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from pathlib import Path
 
-from deepnash_rbc.checkpoints import existing_versions, next_free_version
+from deepnash_rbc.checkpoints import (
+    existing_versions,
+    find_latest_checkpoint,
+    next_free_version,
+)
 from deepnash_rbc.config import Config
 from deepnash_rbc.version import get_version
 
@@ -113,6 +131,74 @@ def fmt_set_value(v) -> str:
     return str(v)
 
 
+def set_args(overrides: dict) -> list[str]:
+    """Turn a dotted-path override dict into repeated ``--set k=v`` CLI args."""
+    args: list[str] = []
+    for k, v in overrides.items():
+        args += ["--set", f"{k}={fmt_set_value(v)}"]
+    return args
+
+
+# A resume continues an *existing* v<version>/ folder, whose checkpoints are
+# shape-locked to the architecture that produced them (see checkpoints.ARCH_KEYS).
+# Changing these on resume would make the trainer's config drift-guard raise; we
+# reject it up front instead so the failure is early and clear.
+ARCH_PREFIXES = ("network.", "encoding.")
+
+
+def resume_step(version: str) -> int | None:
+    """Learner step of the checkpoint ``--resume auto`` would pick, or None.
+
+    ``version`` is bare (e.g. ``"0.43.0"``), matching ``find_latest_checkpoint``.
+    """
+    latest = find_latest_checkpoint(str(CHECKPOINTS), version=version)
+    if latest is None:
+        return None
+    return int(Path(latest).stem.rsplit("_", 1)[1])  # deepnash_async_v0.43.0_80000
+
+
+def pinned_flat(version: str) -> dict:
+    """A version's pinned ``config.json`` flattened to sweepable ``section.field``.
+
+    Replays the exact hyper-parameters that produced the checkpoint so drifted
+    ``config.py`` defaults can't leak into a continuation. ``version`` is bare.
+    """
+    cfg_path = CHECKPOINTS / f"v{version}" / "config.json"
+    if not cfg_path.exists():
+        sys.exit(f"[campaign] no config.json for v{version} at {cfg_path}")
+    cfg = json.loads(cfg_path.read_text())
+    valid = set(all_params())
+    return {
+        f"{section}.{field}": value
+        for section, sub in cfg.items()
+        for field, value in sub.items()
+        if f"{section}.{field}" in valid
+    }
+
+
+@dataclass
+class Run:
+    """One manifest entry: a fresh run (``resume is None``) or a continuation."""
+
+    name: str
+    bump: str
+    resume: str | None = None          # bare version to continue, else fresh
+    overrides: dict | None = None      # fresh: defaults+overrides; resume: overrides
+    raw_args: list[str] | None = None  # legacy inline RUNS: verbatim CLI args
+
+
+@dataclass
+class Planned:
+    """A resolved run ready to launch."""
+
+    version: str            # bare version the run writes to
+    name: str
+    resume: bool
+    args: list[str]        # deepnash-train-async args (resume adds --resume auto)
+    step: int | None = None    # resume start step (resume only, for display)
+    total: int | None = None   # target train.total_iters (resume only)
+
+
 def write_template(path: Path) -> None:
     manifest = {
         "defaults": all_params(),
@@ -121,6 +207,8 @@ def write_template(path: Path) -> None:
              "overrides": {"rnad.eta": 0.3}},
             {"name": "example-anchor-2000", "bump": "minor",
              "overrides": {"rnad.iteration_steps": 2000}},
+            {"name": "example-resume", "resume": "v0.0.0",
+             "overrides": {"train.total_iters": 240000}},
         ],
         "tournament": {
             "pair_games": 8,
@@ -137,22 +225,37 @@ def write_template(path: Path) -> None:
           f"params written to {path}")
 
 
-def load_sweep(path: Path) -> tuple[list[tuple[str, str, list[str]]], dict | None]:
-    """Manifest -> [(bump, name, cli_args)], tournament cfg (or None)."""
+def load_sweep(path: Path) -> tuple[list[Run], dict | None]:
+    """Manifest -> ([Run], tournament cfg or None).
+
+    A run with a ``"resume": "v<version>"`` key continues that existing folder;
+    without it the run is fresh and auto-versioned. Manifest ``defaults`` layer
+    onto fresh runs only -- a resume derives its base from the version's own
+    pinned config (see ``pinned_flat``), so its ``overrides`` carry just the
+    knobs to change (typically ``train.total_iters``).
+    """
     data = json.loads(path.read_text())
     valid = set(all_params())
     defaults = data.get("defaults", {})
-    runs = []
+    runs: list[Run] = []
     for i, run in enumerate(data.get("runs", []), 1):
-        overrides = {**defaults, **run.get("overrides", {})}
+        name = run.get("name", f"run-{i}")
+        raw = run.get("overrides", {})
+        resume = run.get("resume")
+        overrides = raw if resume else {**defaults, **raw}
         unknown = set(overrides) - valid
         if unknown:
-            sys.exit(f"[campaign] run {i}: unknown/non-sweepable params: "
+            sys.exit(f"[campaign] {name}: unknown/non-sweepable params: "
                      f"{sorted(unknown)}")
-        args = []
-        for k, v in overrides.items():
-            args += ["--set", f"{k}={fmt_set_value(v)}"]
-        runs.append((run.get("bump", "minor"), run.get("name", f"run-{i}"), args))
+        if resume:
+            arch = [k for k in raw if k.startswith(ARCH_PREFIXES)]
+            if arch:
+                sys.exit(f"[campaign] {name}: a resume can't change architecture "
+                         f"{sorted(arch)} -- its checkpoints are shape-locked. "
+                         f"Bump a fresh version for a new layout instead.")
+            resume = resume[1:] if resume.startswith("v") else resume
+        runs.append(Run(name=name, bump=run.get("bump", "minor"),
+                        resume=resume, overrides=overrides))
     if not runs:
         sys.exit(f"[campaign] no runs in {path}")
     return runs, data.get("tournament")
@@ -169,15 +272,39 @@ def write_version(version: str) -> None:
     PYPROJECT.write_text(new)
 
 
-def plan_versions(runs: list[tuple[str, str, list[str]]]) -> list[tuple[str, str, list[str]]]:
-    """Resolve each run's version, reserving earlier picks for later runs."""
+def plan_versions(runs: list[Run]) -> list[Planned]:
+    """Resolve each run's version and args, reserving fresh picks for later runs.
+
+    Fresh runs take the next unused version at their bump level; resume runs keep
+    their existing version (already on disk, so never collides with a fresh pick).
+    A resume already at/past its target horizon is dropped with a note.
+    """
     reserved = set(existing_versions(str(CHECKPOINTS)))
     base = get_version()  # fallback only when nothing exists on disk yet
-    plan = []
-    for level, name, run_args in runs:
-        version = next_free_version(level, reserved, base)
-        reserved.add(version)
-        plan.append((version, name, run_args))
+    plan: list[Planned] = []
+    for run in runs:
+        if run.resume:
+            version = run.resume
+            step = resume_step(version)
+            if step is None:
+                sys.exit(f"[campaign] {run.name}: no checkpoint to resume from in "
+                         f"{CHECKPOINTS / f'v{version}'}")
+            merged = {**pinned_flat(version), **(run.overrides or {})}
+            total = int(merged["train.total_iters"])
+            if step >= total:
+                print(f"[campaign] {run.name} (v{version}): already at step "
+                      f"{step:,} >= horizon {total:,}; skipping")
+                continue
+            args = ["--resume", "auto", *set_args(merged)]
+            plan.append(Planned(version=version, name=run.name, resume=True,
+                                args=args, step=step, total=total))
+        else:
+            version = next_free_version(run.bump, reserved, base)
+            reserved.add(version)
+            args = run.raw_args if run.raw_args is not None \
+                else set_args(run.overrides or {})
+            plan.append(Planned(version=version, name=run.name, resume=False,
+                                args=args))
     return plan
 
 
@@ -274,20 +401,26 @@ def main() -> None:
     if args.sweep:
         runs, tournament_cfg = load_sweep(args.sweep)
     else:
-        runs = [(level, f"run-{i}", run_args)
+        runs = [Run(name=f"run-{i}", bump=level, raw_args=run_args)
                 for i, (level, run_args) in enumerate(RUNS, 1)]
         if not runs:
             sys.exit("[campaign] no runs: pass --sweep or edit RUNS in this file")
 
     found = existing_versions(str(CHECKPOINTS))
     plan = plan_versions(runs)
+    if not plan:
+        sys.exit("[campaign] nothing to do (every resume target past its horizon)")
     print(f"[campaign] existing versions: {found or '(none)'}")
     print(f"[campaign] {len(plan)} run(s) planned"
           + (" + gauntlet/prune per run:" if tournament_cfg else ":"))
-    for i, (version, name, run_args) in enumerate(plan, 1):
-        shown = " ".join(run_args) if len(run_args) < 12 else \
-            " ".join(run_args[:12]) + f" ... (+{(len(run_args) - 12) // 2} params)"
-        print(f"  {i}. v{version} [{name}]: deepnash-train-async {shown}")
+    for i, p in enumerate(plan, 1):
+        if p.resume:
+            print(f"  {i}. v{p.version} [{p.name}]: resume @ {p.step:,} -> "
+                  f"{p.total:,} (+{p.total - p.step:,} steps)")
+        else:
+            shown = " ".join(p.args) if len(p.args) < 12 else \
+                " ".join(p.args[:12]) + f" ... (+{(len(p.args) - 12) // 2} params)"
+            print(f"  {i}. v{p.version} [{p.name}]: deepnash-train-async {shown}")
     if args.dry_run:
         return
 
@@ -296,16 +429,26 @@ def main() -> None:
         env["DEEPNASH_IGNORE_IDLE"] = "1"
     print(f"[campaign] idle schedule: "
           f"{'ignored (24/7)' if args.ignore_idle else 'honoured'}")
-    for i, (version, name, run_args) in enumerate(plan, 1):
-        write_version(version)  # what get_version() reads in the subprocess
-        cmd = ["uv", "run", "deepnash-train-async", *run_args]
-        print(f"\n[campaign] === run {i}/{len(plan)}  v{version} [{name}] ===")
-        result = subprocess.run(cmd, cwd=ROOT, env=env)
-        if result.returncode != 0:
-            print(f"[campaign] run {i} (v{version}) exited {result.returncode}; stopping.")
-            sys.exit(result.returncode)
-        if tournament_cfg:
-            tournament_and_prune(version, tournament_cfg)
+    # A resume points pyproject at an OLD version; restore the original verbatim
+    # afterward so the campaign leaves the working tree's version field untouched.
+    original_pyproject = PYPROJECT.read_text()
+    try:
+        for i, p in enumerate(plan, 1):
+            write_version(p.version)  # what get_version() reads in the subprocess
+            cmd = ["uv", "run", "deepnash-train-async", *p.args]
+            tag = "resume" if p.resume else "fresh"
+            print(f"\n[campaign] === run {i}/{len(plan)}  v{p.version} "
+                  f"[{p.name}] ({tag}) ===")
+            result = subprocess.run(cmd, cwd=ROOT, env=env)
+            if result.returncode != 0:
+                print(f"[campaign] run {i} (v{p.version}) exited "
+                      f"{result.returncode}; stopping.")
+                sys.exit(result.returncode)
+            if tournament_cfg:
+                tournament_and_prune(p.version, tournament_cfg)
+    finally:
+        PYPROJECT.write_text(original_pyproject)
+        print("[campaign] restored pyproject.toml version")
     print("\n[campaign] all runs complete.")
 
 
