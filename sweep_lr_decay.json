@@ -77,24 +77,30 @@
       }
     },
     {
+      "_comment": "Fresh run, batch=64 (new-run standard; older configs stay at 32). Batch doubled from 32 -> lr sqrt(2)-scaled (1e-4 -> 1.4142e-4, Adam rule) and total_iters halved 240k -> 120k for an equal sample budget (240k*32 == 120k*64) at ~2x wall-clock; wsd decay_start halved 120k -> 60k to keep the same 'decay over the final half' shape. Name keeps the lr1e-4 label: it is the 1e-4 experiment, batch-corrected.",
       "name": "tf-lr1e-4-wsd",
       "bump": "minor",
       "overrides": {
-        "rnad.lr": 0.0001,
+        "rnad.lr": 0.00014142,
         "rnad.lr_schedule": "wsd",
         "rnad.lr_warmup": 4000,
-        "rnad.lr_decay_start": 120000,
-        "rnad.lr_min": 1e-05
+        "rnad.lr_decay_start": 60000,
+        "rnad.lr_min": 1e-05,
+        "train.total_iters": 120000,
+        "train.batch_trajectories": 64
       }
     },
     {
+      "_comment": "Fresh run, batch=64 (see tf-lr1e-4-wsd). Cosine anneals over [warmup_end, total_iters], so halving total_iters 240k -> 120k compresses the same cosine over the shorter equal-sample horizon; warmup unchanged at 4k. lr sqrt(2)-scaled for the 2x batch.",
       "name": "tf-lr1e-4-cosine",
       "bump": "minor",
       "overrides": {
-        "rnad.lr": 0.0001,
+        "rnad.lr": 0.00014142,
         "rnad.lr_schedule": "cosine",
         "rnad.lr_warmup": 4000,
-        "rnad.lr_min": 1e-05
+        "rnad.lr_min": 1e-05,
+        "train.total_iters": 120000,
+        "train.batch_trajectories": 64
       }
     }
   ],

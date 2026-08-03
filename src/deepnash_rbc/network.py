@@ -186,6 +186,101 @@ class _TransformerMixer(nn.Module):
         return out[-1], buf  # last position is the current step's context
 
 
+# --- sLSTM vanilla-backend perf patch (bit-identical) -----------------------
+# The NX-AI vanilla sLSTM forward is a sequential Python time-loop; its pointwise
+# runs ``if torch.all(n == 0.0):`` every step, which forces a device->host sync on
+# every timestep of the GPU learner (~T stalls per sequence). The step-0 branch is
+# the *only* place it differs, and it is fully determined by position: the initial
+# n is 0 (step 0) and n = fgate*n + igate is strictly > 0 afterwards (igate =
+# min(exp(.), 1) > 0). So selecting the branch from a Python ``first`` flag is
+# provably identical output with no per-step sync. We patch only the training
+# ``slstm_forward`` (the GPU learner loop); the CPU-actor ``slstm_forward_step`` is
+# left untouched (no GPU sync there, and train==act parity is preserved because the
+# patched forward stays bit-identical to the original forward).
+_SLSTM_NOSYNC_INSTALLED = False
+
+
+def _slstm_pointwise_nosync(Wx, Ry, b, states, first):
+    """Bit-identical reimplementation of xlstm's vanilla ``slstm_forward_pointwise``
+    that picks the step-0 branch from the Python ``first`` flag instead of the
+    ``torch.all(n == 0.0)`` GPU reduction (which syncs). Same ops, same order."""
+    from torch.nn.functional import logsigmoid
+
+    raw = Wx + Ry + b
+    y, c, n, m = torch.unbind(states.view(4, states.shape[1], -1), dim=0)
+    iraw, fraw, zraw, oraw = torch.unbind(raw.view(raw.shape[0], 4, -1), dim=1)
+    logfplusm = m + logsigmoid(fraw)
+    mnew = iraw if first else torch.max(iraw, logfplusm)
+    ogate = torch.sigmoid(oraw)
+    igate = torch.minimum(torch.exp(iraw - mnew), torch.ones_like(iraw))
+    fgate = torch.minimum(torch.exp(logfplusm - mnew), torch.ones_like(iraw))
+    cnew = fgate * c + igate * torch.tanh(zraw)
+    nnew = fgate * n + igate
+    ynew = ogate * cnew / nnew
+    return (
+        torch.stack((ynew, cnew, nnew, mnew), dim=0),
+        torch.stack((igate, fgate, zraw, ogate), dim=0),
+    )
+
+
+def _slstm_forward_nosync(x, states, R, b, pointwise_forward, constants={}):
+    """Drop-in for ``xlstm.blocks.slstm.cell.slstm_forward`` with the per-timestep
+    sync removed. Identical loop, shapes and return value; only the pointwise is
+    swapped for the sync-free variant (valid because arch=='xlstm' blocks only ever
+    use function=='slstm'). ``pointwise_forward`` is intentionally ignored."""
+    del pointwise_forward, constants
+    num_states = states.shape[0]
+    sequence_dim = x.shape[0]
+    num_gates_r = R.shape[1] // R.shape[2]
+    hidden_dim = R.shape[2] * R.shape[0]
+    num_gates_t = b.shape[0] // hidden_dim
+    batch_dim = x.shape[1]
+    num_heads = R.shape[0]
+    head_dim = R.shape[2]
+
+    assert batch_dim == states.shape[1]
+    assert hidden_dim == states.shape[2]
+
+    g = torch.zeros(
+        [sequence_dim + 1, num_gates_t, batch_dim, hidden_dim],
+        device=x.device, dtype=x.dtype,
+    )
+    states_all = torch.zeros(
+        [num_states, sequence_dim + 1, batch_dim, hidden_dim],
+        device=x.device, dtype=x.dtype,
+    )
+    states_all[:, 0] = states
+    for i, Wx_t in enumerate(x.unbind(dim=0)):
+        Ry = (
+            states[0]
+            .reshape(batch_dim, num_heads, 1, -1)
+            .matmul(
+                R.transpose(1, 2).reshape(1, num_heads, head_dim, num_gates_r * head_dim)
+            )
+            .reshape(batch_dim, num_heads, num_gates_r, -1)
+            .transpose(1, 2)
+            .reshape(batch_dim, -1)
+        )
+        sdtype = states.dtype
+        states, gates = _slstm_pointwise_nosync(Wx_t, Ry, b, states, first=(i == 0))
+        states = states.to(dtype=sdtype)
+        g[i] = gates
+        states_all[:, i + 1] = states
+
+    return states_all, states, g
+
+
+def _install_slstm_nosync_patch():
+    """Idempotently swap the vanilla sLSTM training forward for the sync-free one."""
+    global _SLSTM_NOSYNC_INSTALLED
+    if _SLSTM_NOSYNC_INSTALLED:
+        return
+    from xlstm.blocks.slstm import cell as _slstm_cell
+
+    _slstm_cell.slstm_forward = _slstm_forward_nosync
+    _SLSTM_NOSYNC_INSTALLED = True
+
+
 def _build_xlstm_stack(dim, num_blocks, num_heads, max_seq, slstm_at, conv_kernel):
     """Construct an NX-AI ``xLSTMBlockStack`` of alternating mLSTM/sLSTM blocks.
 
@@ -205,6 +300,8 @@ def _build_xlstm_stack(dim, num_blocks, num_heads, max_seq, slstm_at, conv_kerne
         mLSTMBlockConfig, mLSTMLayerConfig,
         sLSTMBlockConfig, sLSTMLayerConfig, FeedForwardConfig,
     )
+
+    _install_slstm_nosync_patch()  # remove the vanilla sLSTM per-timestep GPU sync
 
     cfg = xLSTMBlockStackConfig(
         mlstm_block=mLSTMBlockConfig(
