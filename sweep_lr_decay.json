@@ -1,0 +1,114 @@
+{
+  "defaults": {
+    "encoding.history": 1,
+    "network.arch": "transformer",
+    "network.blocks": 6,
+    "network.channels": 128,
+    "network.enc_blocks": 4,
+    "network.max_seq": 512,
+    "network.mixer_dim": 128,
+    "network.mixer_layers": 2,
+    "network.nhead": 4,
+    "network.value_hidden": 128,
+    "rnad.amp": true,
+    "rnad.c_clip": 1.0,
+    "rnad.compile_net": false,
+    "rnad.eta": 0.5,
+    "rnad.fast_learner": true,
+    "rnad.full_action_neurd": true,
+    "rnad.gamma": 1.0,
+    "rnad.grad_clip": 10.0,
+    "rnad.iteration_steps": 1000,
+    "rnad.lr": 5e-05,
+    "rnad.neurd_clip": 2.5,
+    "rnad.rho_clip": 1.0,
+    "rnad.value_coef": 1.0,
+    "train.async_actors": 16,
+    "train.batch_trajectories": 32,
+    "train.buffer_capacity": 4096,
+    "train.checkpoint_every": 10000,
+    "train.device": "cuda",
+    "train.drain_per_cycle": 64,
+    "train.eval_every": 0,
+    "train.eval_games": 50,
+    "train.eval_opponents": [
+      "random",
+      "attacker",
+      "trout"
+    ],
+    "train.games_per_iter": 8,
+    "train.idle_schedule": true,
+    "train.learner_steps_per_iter": 4,
+    "train.min_buffer_to_train": 64,
+    "train.num_actors": 1,
+    "train.prefetch_depth": 2,
+    "train.progress": true,
+    "train.seconds_per_player": 900.0,
+    "train.seed": 0,
+    "train.total_iters": 240000,
+    "train.train_days": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "train.train_start_hour": 19,
+    "train.train_stop_hour": 6,
+    "train.traj_queue_size": 256,
+    "train.weight_broadcast_every": 20
+  },
+  "runs": [
+    {
+      "name": "xlstm-v0.50-to-500k",
+      "resume": "v0.50.0",
+      "overrides": {
+        "train.total_iters": 500000
+      }
+    },
+    {
+      "name": "gru-v0.41-to-240k-wsd",
+      "resume": "v0.41.0",
+      "overrides": {
+        "train.total_iters": 240000,
+        "rnad.lr_schedule": "wsd",
+        "rnad.lr_decay_start": 160000,
+        "rnad.lr_min": 1e-05
+      }
+    },
+    {
+      "name": "tf-lr1e-4-wsd",
+      "bump": "minor",
+      "overrides": {
+        "rnad.lr": 0.0001,
+        "rnad.lr_schedule": "wsd",
+        "rnad.lr_warmup": 4000,
+        "rnad.lr_decay_start": 120000,
+        "rnad.lr_min": 1e-05
+      }
+    },
+    {
+      "name": "tf-lr1e-4-cosine",
+      "bump": "minor",
+      "overrides": {
+        "rnad.lr": 0.0001,
+        "rnad.lr_schedule": "cosine",
+        "rnad.lr_warmup": 4000,
+        "rnad.lr_min": 1e-05
+      }
+    }
+  ],
+  "tournament": {
+    "pair_games": 8,
+    "baselines": [
+      "random",
+      "trout",
+      "mht"
+    ],
+    "incumbents": 5,
+    "keep_top": null,
+    "workers": 8,
+    "threshold": 0.05,
+    "out": "results/tournament.jsonl"
+  }
+}
