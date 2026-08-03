@@ -74,8 +74,22 @@ class RNaDConfig:
     # action's logit is updated. Toggle for a clean flag-off/flag-on ablation.
     full_action_neurd: bool = True
     # --- optimization ---
-    lr: float = 5e-5
+    lr: float = 5e-5  # peak learning rate (the value the schedule warms up to)
     grad_clip: float = 10.0
+    # --- learning-rate schedule (step-derived, so it resumes correctly) ---
+    # The lr applied at learner step ``s`` is computed from ``s`` alone (see
+    # ``trainer.lr_at_step``); nothing is stored in the optimizer/checkpoint, so a
+    # resumed run picks the schedule back up at its restored step with no drift.
+    #   constant -> always ``lr`` (default; reproduces the pre-schedule behavior)
+    #   linear   -> warm up to ``lr`` over ``lr_warmup``, then decay to ``lr_min``
+    #   cosine   -> warm up, then cosine-anneal to ``lr_min``
+    #   wsd      -> warm up, hold ``lr`` until ``lr_decay_start``, then cosine-decay
+    #               to ``lr_min`` (warmup-stable-decay; decay onset is empirical)
+    # Decay spans from the decay start to ``train.total_iters``.
+    lr_schedule: str = "constant"
+    lr_warmup: int = 0  # linear warmup steps from 0 -> lr (0 disables warmup)
+    lr_decay_start: int = 0  # wsd only: hold lr until this step, then decay
+    lr_min: float = 0.0  # floor the decay lands on at train.total_iters
     # --- learner performance (model-neutral unless noted) ---
     # fast_learner: vectorized learner step (batched v-trace, scatter-built legal
     # masks, fused scalar readback). Bit-identical math to the legacy path -- it
@@ -106,6 +120,11 @@ class TrainConfig:
     # resume: None = fresh start; "auto" = latest checkpoint in checkpoint_dir;
     # or an explicit checkpoint path. Set via --resume on deepnash-train-async.
     resume: str | None = None
+    # Provenance: when this run was FORKED off another run's checkpoint (see
+    # scripts/train_campaign.py "from"), this records the source as
+    # "v<version>@<step>" so eval can reconstruct lineage from config.json alone.
+    # None for fresh runs and in-place resumes.
+    fork_source: str | None = None
     # --- evaluation / skill metrics ---
     # eval_every: int = 50        # run a skill eval every N iterations (0 disables)
     # eval_every: int = 10_000

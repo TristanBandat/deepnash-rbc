@@ -50,6 +50,23 @@ Two ways to define the campaign:
    because a folder's checkpoints are shape-locked. Resumes already at/past their
    horizon are skipped.
 
+   A run with a "from": "v<version>@<step>" key FORKS a specific checkpoint into a
+   brand-new auto-versioned folder (bump applies) -- ideal for minmaxing: branch a
+   strong checkpoint and try different schedules/hyper-parameters without touching
+   the source run. "from" also accepts "v<version>" (its latest checkpoint) or a
+   literal .pt path. Like resume it replays the source's pinned config for the
+   architecture (arch overrides rejected) and applies the run's "overrides" on top;
+   the forked run's step counter starts at the source checkpoint's step, so a
+   step-based lr schedule (rnad.lr_schedule) is measured on the absolute step. The
+   source is stamped into the new folder's config.json as
+   ``train.fork_source = "v<version>@<step>"`` (resolved to an exact step) so eval
+   can reconstruct lineage from config.json alone; it is None for fresh/resume runs.
+
+       {"name": "tf-wsd-from-v0.42-peak", "bump": "minor",
+        "from": "v0.42.0@80000",
+        "overrides": {"rnad.lr_schedule": "wsd", "rnad.lr_decay_start": 120000,
+                      "train.total_iters": 240000}}
+
 2. Legacy: edit ``RUNS`` below; each entry is (bump_level, [extra CLI args])
    passed straight to deepnash-train-async.
 
@@ -102,6 +119,7 @@ NON_SWEEPABLE = {
     "train.metrics_path",        # derived from checkpoint_dir + version
     "train.checkpoint_dir",      # campaign owns the layout
     "train.resume",              # resuming is not a sweep axis
+    "train.fork_source",         # provenance, stamped by the fork path (below)
 }
 
 
@@ -176,14 +194,45 @@ def pinned_flat(version: str) -> dict:
     }
 
 
+def resolve_checkpoint(spec: str) -> tuple[str, str, int]:
+    """Resolve a fork source ``spec`` -> (checkpoint path, source version, step).
+
+    Accepts ``"v0.42.0@80000"`` (that exact checkpoint), ``"v0.42.0"`` (the
+    version's latest checkpoint), or a literal ``.pt`` path. The bare source
+    version is returned so the fork can replay that checkpoint's pinned config
+    and match its architecture. Step is parsed from the filename.
+    """
+    if spec.endswith(".pt") or "/" in spec:
+        p = Path(spec)
+        if not p.is_absolute():
+            p = ROOT / p
+        parent = p.parent.name
+        version = parent[1:] if parent.startswith("v") else parent
+    elif "@" in spec:
+        ver, _, step_s = spec.partition("@")
+        version = ver[1:] if ver.startswith("v") else ver
+        p = CHECKPOINTS / f"v{version}" / f"deepnash_async_v{version}_{step_s}.pt"
+    else:
+        version = spec[1:] if spec.startswith("v") else spec
+        latest = find_latest_checkpoint(str(CHECKPOINTS), version=version)
+        p = Path(latest) if latest else CHECKPOINTS / f"v{version}"
+    if not p.exists():
+        sys.exit(f"[campaign] fork source not found: {spec} -> {p}")
+    m = re.search(r"_(\d+)\.pt$", p.name)
+    if not m:
+        sys.exit(f"[campaign] can't parse a step from fork source {p.name}")
+    return str(p), version, int(m.group(1))
+
+
 @dataclass
 class Run:
-    """One manifest entry: a fresh run (``resume is None``) or a continuation."""
+    """One manifest entry: a fresh run, an in-place resume, or a fork."""
 
     name: str
     bump: str
-    resume: str | None = None          # bare version to continue, else fresh
-    overrides: dict | None = None      # fresh: defaults+overrides; resume: overrides
+    resume: str | None = None          # bare version to continue in place, else None
+    fork_from: str | None = None       # checkpoint spec to fork a NEW version from
+    overrides: dict | None = None      # fresh: defaults+overrides; else: overrides only
     raw_args: list[str] | None = None  # legacy inline RUNS: verbatim CLI args
 
 
@@ -193,10 +242,11 @@ class Planned:
 
     version: str            # bare version the run writes to
     name: str
-    resume: bool
-    args: list[str]        # deepnash-train-async args (resume adds --resume auto)
-    step: int | None = None    # resume start step (resume only, for display)
-    total: int | None = None   # target train.total_iters (resume only)
+    kind: str              # "fresh" | "resume" | "fork"
+    args: list[str]        # deepnash-train-async args (resume/fork add --resume ...)
+    step: int | None = None    # resume/fork start step (for display)
+    total: int | None = None   # target train.total_iters (resume/fork)
+    source: str | None = None  # fork: source checkpoint spec (for display)
 
 
 def write_template(path: Path) -> None:
@@ -209,6 +259,9 @@ def write_template(path: Path) -> None:
              "overrides": {"rnad.iteration_steps": 2000}},
             {"name": "example-resume", "resume": "v0.0.0",
              "overrides": {"train.total_iters": 240000}},
+            {"name": "example-fork", "from": "v0.0.0@80000",
+             "overrides": {"rnad.lr_schedule": "wsd",
+                           "train.total_iters": 240000}},
         ],
         "tournament": {
             "pair_games": 8,
@@ -228,11 +281,13 @@ def write_template(path: Path) -> None:
 def load_sweep(path: Path) -> tuple[list[Run], dict | None]:
     """Manifest -> ([Run], tournament cfg or None).
 
-    A run with a ``"resume": "v<version>"`` key continues that existing folder;
-    without it the run is fresh and auto-versioned. Manifest ``defaults`` layer
-    onto fresh runs only -- a resume derives its base from the version's own
-    pinned config (see ``pinned_flat``), so its ``overrides`` carry just the
-    knobs to change (typically ``train.total_iters``).
+    A run continues a checkpoint if it has a ``"resume": "v<version>"`` key (extend
+    that folder in place) or a ``"from": "v<version>@<step>"`` key (fork a NEW
+    auto-versioned folder off that checkpoint -- for minmaxing variants without
+    touching the source run). Otherwise the run is fresh and auto-versioned.
+    Manifest ``defaults`` layer onto fresh runs only -- a resume/fork derives its
+    base from the source's own pinned config (see ``pinned_flat``), so its
+    ``overrides`` carry just the knobs to change (schedule, lr, total_iters, ...).
     """
     data = json.loads(path.read_text())
     valid = set(all_params())
@@ -242,20 +297,25 @@ def load_sweep(path: Path) -> tuple[list[Run], dict | None]:
         name = run.get("name", f"run-{i}")
         raw = run.get("overrides", {})
         resume = run.get("resume")
-        overrides = raw if resume else {**defaults, **raw}
+        fork_from = run.get("from")
+        if resume and fork_from:
+            sys.exit(f"[campaign] {name}: use either 'resume' or 'from', not both")
+        cont = bool(resume or fork_from)  # continues an existing checkpoint
+        overrides = raw if cont else {**defaults, **raw}
         unknown = set(overrides) - valid
         if unknown:
             sys.exit(f"[campaign] {name}: unknown/non-sweepable params: "
                      f"{sorted(unknown)}")
-        if resume:
+        if cont:
             arch = [k for k in raw if k.startswith(ARCH_PREFIXES)]
             if arch:
-                sys.exit(f"[campaign] {name}: a resume can't change architecture "
-                         f"{sorted(arch)} -- its checkpoints are shape-locked. "
-                         f"Bump a fresh version for a new layout instead.")
+                sys.exit(f"[campaign] {name}: can't change architecture {sorted(arch)} "
+                         f"when continuing a checkpoint -- its weights are shape-locked. "
+                         f"Use a fresh run for a new layout.")
+        if resume:
             resume = resume[1:] if resume.startswith("v") else resume
-        runs.append(Run(name=name, bump=run.get("bump", "minor"),
-                        resume=resume, overrides=overrides))
+        runs.append(Run(name=name, bump=run.get("bump", "minor"), resume=resume,
+                        fork_from=fork_from, overrides=overrides))
     if not runs:
         sys.exit(f"[campaign] no runs in {path}")
     return runs, data.get("tournament")
@@ -275,9 +335,9 @@ def write_version(version: str) -> None:
 def plan_versions(runs: list[Run]) -> list[Planned]:
     """Resolve each run's version and args, reserving fresh picks for later runs.
 
-    Fresh runs take the next unused version at their bump level; resume runs keep
-    their existing version (already on disk, so never collides with a fresh pick).
-    A resume already at/past its target horizon is dropped with a note.
+    Fresh/fork runs take the next unused version at their bump level; resume runs
+    keep their existing version (already on disk, so never collides with a fresh
+    pick). A resume/fork already at/past its target horizon is dropped with a note.
     """
     reserved = set(existing_versions(str(CHECKPOINTS)))
     base = get_version()  # fallback only when nothing exists on disk yet
@@ -296,14 +356,32 @@ def plan_versions(runs: list[Run]) -> list[Planned]:
                       f"{step:,} >= horizon {total:,}; skipping")
                 continue
             args = ["--resume", "auto", *set_args(merged)]
-            plan.append(Planned(version=version, name=run.name, resume=True,
+            plan.append(Planned(version=version, name=run.name, kind="resume",
                                 args=args, step=step, total=total))
+        elif run.fork_from:
+            version = next_free_version(run.bump, reserved, base)
+            reserved.add(version)
+            ckpt, src_ver, step = resolve_checkpoint(run.fork_from)
+            # arch comes from the source (so the loaded weights fit); overrides win
+            merged = {**pinned_flat(src_ver), **(run.overrides or {})}
+            # stamp lineage into the new folder's config.json (resolved to an exact
+            # version@step) so eval can trace the fork without external bookkeeping
+            merged["train.fork_source"] = f"v{src_ver}@{step}"
+            total = int(merged["train.total_iters"])
+            if step >= total:
+                print(f"[campaign] {run.name}: fork source at {step:,} >= horizon "
+                      f"{total:,}; nothing to train; skipping")
+                continue
+            args = ["--resume", ckpt, *set_args(merged)]
+            plan.append(Planned(version=version, name=run.name, kind="fork",
+                                args=args, step=step, total=total,
+                                source=run.fork_from))
         else:
             version = next_free_version(run.bump, reserved, base)
             reserved.add(version)
             args = run.raw_args if run.raw_args is not None \
                 else set_args(run.overrides or {})
-            plan.append(Planned(version=version, name=run.name, resume=False,
+            plan.append(Planned(version=version, name=run.name, kind="fresh",
                                 args=args))
     return plan
 
@@ -409,13 +487,16 @@ def main() -> None:
     found = existing_versions(str(CHECKPOINTS))
     plan = plan_versions(runs)
     if not plan:
-        sys.exit("[campaign] nothing to do (every resume target past its horizon)")
+        sys.exit("[campaign] nothing to do (every resume/fork target past its horizon)")
     print(f"[campaign] existing versions: {found or '(none)'}")
     print(f"[campaign] {len(plan)} run(s) planned"
           + (" + gauntlet/prune per run:" if tournament_cfg else ":"))
     for i, p in enumerate(plan, 1):
-        if p.resume:
+        if p.kind == "resume":
             print(f"  {i}. v{p.version} [{p.name}]: resume @ {p.step:,} -> "
+                  f"{p.total:,} (+{p.total - p.step:,} steps)")
+        elif p.kind == "fork":
+            print(f"  {i}. v{p.version} [{p.name}]: fork {p.source} @ {p.step:,} -> "
                   f"{p.total:,} (+{p.total - p.step:,} steps)")
         else:
             shown = " ".join(p.args) if len(p.args) < 12 else \
@@ -436,9 +517,8 @@ def main() -> None:
         for i, p in enumerate(plan, 1):
             write_version(p.version)  # what get_version() reads in the subprocess
             cmd = ["uv", "run", "deepnash-train-async", *p.args]
-            tag = "resume" if p.resume else "fresh"
             print(f"\n[campaign] === run {i}/{len(plan)}  v{p.version} "
-                  f"[{p.name}] ({tag}) ===")
+                  f"[{p.name}] ({p.kind}) ===")
             result = subprocess.run(cmd, cwd=ROOT, env=env)
             if result.returncode != 0:
                 print(f"[campaign] run {i} (v{p.version}) exited "

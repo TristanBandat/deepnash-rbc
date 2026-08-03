@@ -34,6 +34,7 @@ bit-identical guarantee -- benchmark them on the GPU before trusting them.
 from __future__ import annotations
 
 import copy
+import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -48,6 +49,33 @@ from .transform import transform_rewards
 from .vtrace import vtrace
 
 SENSE_SIZE = 64
+
+
+def lr_at_step(step: int, r, total_iters: int) -> float:
+    """Learning rate at 0-indexed learner ``step`` for the configured schedule.
+
+    Derived purely from ``step`` (and static config), so a resumed run continues
+    the same curve with no scheduler state to checkpoint -- see RNaDConfig's lr
+    schedule docs. ``r`` is the RNaDConfig. Shapes:
+      * warmup: linear 0 -> ``lr`` over ``lr_warmup`` steps (shared by all decays)
+      * constant: ``lr`` after warmup
+      * cosine/linear: decay ``lr`` -> ``lr_min`` from warmup end to ``total_iters``
+      * wsd: hold ``lr`` until ``lr_decay_start``, then cosine-decay to ``lr_min``
+    """
+    peak = r.lr
+    if step < r.lr_warmup:  # linear warmup (no-op when lr_warmup == 0)
+        return peak * (step + 1) / r.lr_warmup
+    if r.lr_schedule == "constant":
+        return peak
+    decay_start = r.lr_decay_start if r.lr_schedule == "wsd" else r.lr_warmup
+    if step < decay_start:  # wsd stable phase
+        return peak
+    end = max(total_iters, decay_start + 1)
+    frac = min(max((step - decay_start) / (end - decay_start), 0.0), 1.0)
+    if r.lr_schedule == "linear":
+        return peak + (r.lr_min - peak) * frac
+    # cosine + wsd tail: smooth anneal peak -> lr_min
+    return r.lr_min + 0.5 * (peak - r.lr_min) * (1.0 + math.cos(math.pi * frac))
 
 
 @dataclass
@@ -304,6 +332,11 @@ class RNaDLearner:
         self.opt.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.rnad.grad_clip)
+        # step-derived lr (self.steps is the 0-indexed step being taken); constant
+        # schedule reproduces the fixed cfg.rnad.lr exactly.
+        lr = lr_at_step(self.steps, self.cfg.rnad, self.cfg.train.total_iters)
+        for g in self.opt.param_groups:
+            g["lr"] = lr
         self.opt.step()
 
         self.steps += 1
@@ -322,6 +355,7 @@ class RNaDLearner:
             "policy_loss": pl,
             "value_loss": vl,
             "entropy": ent,
+            "lr": lr,
             "iteration": self.iteration,
             "steps": self.steps,
         }
