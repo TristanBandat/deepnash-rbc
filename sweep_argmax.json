@@ -77,15 +77,6 @@
       }
     },
     {
-      "_comment": "Control arm, seed 2.",
-      "name": "argmax-sampled-seed-2",
-      "bump": "minor",
-      "overrides": {
-        "train.selfplay_sample": true,
-        "train.seed": 2
-      }
-    },
-    {
       "_comment": "Treatment arm, seed 0: greedy (argmax) self-play. Deterministic action selection for a fixed network -- exploration comes only from weight updates and color/opening asymmetry, not from the policy itself.",
       "name": "argmax-greedy-seed-0",
       "bump": "minor",
@@ -101,15 +92,6 @@
       "overrides": {
         "train.selfplay_sample": false,
         "train.seed": 1
-      }
-    },
-    {
-      "_comment": "Treatment arm, seed 2.",
-      "name": "argmax-greedy-seed-2",
-      "bump": "minor",
-      "overrides": {
-        "train.selfplay_sample": false,
-        "train.seed": 2
       }
     }
   ],
