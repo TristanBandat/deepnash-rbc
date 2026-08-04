@@ -1,0 +1,129 @@
+{
+  "_comment": "Argmax-vs-sampled self-play campaign, built on the v0.14.0 config (history=16, eta=0.5, lr=5e-5, 6x128 resnet, 80k steps) -- the eta=0.5 seed-0 run that tied for best on the pooled Elo ladder. Run with: uv run python scripts/train_campaign.py --sweep sweep_argmax.json [--dry-run]. The single axis is train.selfplay_sample: true = sample the masked softmax (the DeepNash/R-NaD default), false = argmax (greedy) action selection during self-play. 6 runs = 3 seeds (0,1,2) x 2 modes, so the mode effect can be read against seed noise -- essential here, because the existing leaderboard showed ~140 Elo spread across four identical-config seeds, i.e. a 2-run comparison would be uninterpretable. train.eval_sample is pinned false (greedy) for EVERY run so evaluation is identical regardless of how the run was trained; only the training-time behavior differs. WARNING on the argmax arm: greedy self-play makes trajectories deterministic for a fixed network, which collapses exploration and breaks R-NaD's on-policy assumption (the behavior policy mu is no longer the softmax the importance ratios in v-trace assume, so rho/c are computed against a distribution the actor never actually sampled from). These runs are expected to be WEAKER and possibly degenerate; the point is to measure and document that, not to find a better agent.",
+  "defaults": {
+    "encoding.history": 16,
+    "network.arch": "resnet",
+    "network.channels": 128,
+    "network.blocks": 6,
+    "network.value_hidden": 128,
+    "rnad.eta": 0.5,
+    "rnad.iteration_steps": 1000,
+    "rnad.gamma": 1.0,
+    "rnad.rho_clip": 1.0,
+    "rnad.c_clip": 1.0,
+    "rnad.neurd_clip": 2.5,
+    "rnad.value_coef": 1.0,
+    "rnad.full_action_neurd": true,
+    "rnad.lr": 5e-05,
+    "rnad.lr_schedule": "constant",
+    "rnad.grad_clip": 10.0,
+    "rnad.fast_learner": true,
+    "rnad.compile_net": false,
+    "rnad.amp": true,
+    "train.games_per_iter": 8,
+    "train.learner_steps_per_iter": 4,
+    "train.total_iters": 80000,
+    "train.batch_trajectories": 32,
+    "train.buffer_capacity": 4096,
+    "train.num_actors": 1,
+    "train.selfplay_sample": true,
+    "train.device": "cuda",
+    "train.seconds_per_player": 900.0,
+    "train.checkpoint_every": 10000,
+    "train.seed": 0,
+    "train.eval_every": 0,
+    "train.eval_games": 50,
+    "train.eval_sample": false,
+    "train.eval_opponents": [
+      "random",
+      "attacker",
+      "trout"
+    ],
+    "train.progress": true,
+    "train.idle_schedule": true,
+    "train.train_start_hour": 19,
+    "train.train_stop_hour": 6,
+    "train.train_days": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "train.async_actors": 16,
+    "train.traj_queue_size": 256,
+    "train.min_buffer_to_train": 64,
+    "train.drain_per_cycle": 64,
+    "train.weight_broadcast_every": 20,
+    "train.prefetch_depth": 2
+  },
+  "runs": [
+    {
+      "_comment": "Control arm, seed 0: stochastic self-play (masked-softmax sampling), the canonical R-NaD behavior and an as-close-as-possible re-run of v0.14.0. Anchors the comparison and re-measures seed noise on the current code.",
+      "name": "argmax-sampled-seed-0",
+      "bump": "minor",
+      "overrides": {
+        "train.selfplay_sample": true,
+        "train.seed": 0
+      }
+    },
+    {
+      "_comment": "Control arm, seed 1.",
+      "name": "argmax-sampled-seed-1",
+      "bump": "minor",
+      "overrides": {
+        "train.selfplay_sample": true,
+        "train.seed": 1
+      }
+    },
+    {
+      "_comment": "Control arm, seed 2.",
+      "name": "argmax-sampled-seed-2",
+      "bump": "minor",
+      "overrides": {
+        "train.selfplay_sample": true,
+        "train.seed": 2
+      }
+    },
+    {
+      "_comment": "Treatment arm, seed 0: greedy (argmax) self-play. Deterministic action selection for a fixed network -- exploration comes only from weight updates and color/opening asymmetry, not from the policy itself.",
+      "name": "argmax-greedy-seed-0",
+      "bump": "minor",
+      "overrides": {
+        "train.selfplay_sample": false,
+        "train.seed": 0
+      }
+    },
+    {
+      "_comment": "Treatment arm, seed 1.",
+      "name": "argmax-greedy-seed-1",
+      "bump": "minor",
+      "overrides": {
+        "train.selfplay_sample": false,
+        "train.seed": 1
+      }
+    },
+    {
+      "_comment": "Treatment arm, seed 2.",
+      "name": "argmax-greedy-seed-2",
+      "bump": "minor",
+      "overrides": {
+        "train.selfplay_sample": false,
+        "train.seed": 2
+      }
+    }
+  ],
+  "tournament": {
+    "pair_games": 8,
+    "baselines": [
+      "random",
+      "trout",
+      "mht"
+    ],
+    "incumbents": 5,
+    "keep_top": null,
+    "workers": 8,
+    "threshold": 0.05,
+    "out": "results/tournament.jsonl"
+  }
+}
