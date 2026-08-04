@@ -112,6 +112,10 @@ class TrainConfig:
     batch_trajectories: int = 32  # trajectories sampled from buffer per learner step
     buffer_capacity: int = 4096
     num_actors: int = 1  # >1 uses torch.multiprocessing (see selfplay.py)
+    # Self-play action selection: True = sample the masked softmax (required for
+    # R-NaD exploration). False = argmax (greedy) -- deterministic trajectories,
+    # collapses exploration; experiment-only, do not use for real training runs.
+    selfplay_sample: bool = True
     device: str = "cuda"  # falls back to cpu automatically if unavailable
     seconds_per_player: float = 900.0
     checkpoint_every: int = 10_000
@@ -130,6 +134,9 @@ class TrainConfig:
     # eval_every: int = 10_000
     eval_every: int = 0
     eval_games: int = 50  # games per opponent (split evenly across colors)
+    # Eval action selection: False = argmax (greedy, deterministic -- current
+    # default). True = sample the masked softmax at eval time.
+    eval_sample: bool = False
     eval_opponents: tuple = (
         "random",
         "attacker",

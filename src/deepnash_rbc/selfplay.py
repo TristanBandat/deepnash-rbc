@@ -27,8 +27,8 @@ from .replay import Trajectory
 def play_one_game(net: DeepNashNet, device: torch.device, cfg: Config) -> List[Trajectory]:
     net.eval()
     history = cfg.encoding.history
-    white = RNaDPlayer(net, device, history=history, sample=True)
-    black = RNaDPlayer(net, device, history=history, sample=True)
+    white = RNaDPlayer(net, device, history=history, sample=cfg.train.selfplay_sample)
+    black = RNaDPlayer(net, device, history=history, sample=cfg.train.selfplay_sample)
     game = LocalGame(seconds_per_player=cfg.train.seconds_per_player)
     try:
         play_local_game(white, black, game=game)
