@@ -158,7 +158,73 @@ def _(mo):
 
 
 @app.cell
-def _(ckpt_input, json, pl):
+def _():
+    # ================= ALIAS SCHEME (edit here) =============================
+    # Every run is shown by a short, config-derived *alias* instead of its bare
+    # version number, in all plots and tables. The alias is:
+    #
+    #     <family>[·<deviation>...]·s<seed>
+    #
+    # where <family> is the model family and each <deviation> is a hyper-param
+    # that differs from that family's baseline (nothing is printed when a run is
+    # at baseline, so a plain "CNN·s0" is the reference config):
+    #
+    #     family   CNN (resnet / channel-stacked) | GRU | LSTM | TFM | xLSTM
+    #     η<e>     regularisation eta      (baseline 0.2)
+    #     H<h>     observation history     (CNN baseline 16; sequence nets are 1)
+    #     c<c>     conv channels           (baseline 128)
+    #     b<n>     residual blocks         (baseline 6)
+    #     lr1e-4   peak learning rate      (baseline 5e-5)
+    #     greedy   argmax self-play        (baseline = sampled)
+    #     L<n>     mixer layers   (sequence only, baseline 2)
+    #     e<n>     encoder blocks (sequence only, baseline 4)
+    #
+    # Genuine re-runs that share an identical config+seed get the bare version
+    # appended so aliases stay unique, e.g. "CNN·η0.5·s0 (v0.14.0)".
+    #
+    # To hand-name a run, add "version": "my name" to ALIAS_OVERRIDE below; that
+    # string is used verbatim and wins over the auto scheme.
+    FAMILY = {
+        None: "CNN", "resnet": "CNN",
+        "gru": "GRU", "lstm": "LSTM", "transformer": "TFM", "xlstm": "xLSTM",
+    }
+    ALIAS_OVERRIDE = {
+        "v0.14.0": "CNN·η0.5·best·s0",  # top of the seed distribution (see thesis)
+    }
+
+    def core_alias(cfg: dict) -> str:
+        """Family + deviations-from-baseline, no seed. All members of a seed-
+        replicate group share this string, so it doubles as the group title."""
+        net, rnad, enc, train = (
+            cfg["network"], cfg["rnad"], cfg["encoding"], cfg["train"]
+        )
+        fam = FAMILY.get(net.get("arch"), net.get("arch") or "CNN")
+        num = lambda x: f"{x:g}"
+        tags = []
+        if rnad.get("eta") != 0.2:
+            tags.append(f"η{num(rnad.get('eta'))}")
+        if fam == "CNN" and enc.get("history") != 16:
+            tags.append(f"H{enc.get('history')}")
+        if net.get("channels") != 128:
+            tags.append(f"c{net.get('channels')}")
+        if net.get("blocks") != 6:
+            tags.append(f"b{net.get('blocks')}")
+        if rnad.get("lr") != 5e-5:
+            tags.append("lr1e-4")
+        if train.get("selfplay_sample", True) is False:
+            tags.append("greedy")
+        if fam != "CNN":
+            if net.get("mixer_layers") not in (2, None):
+                tags.append(f"L{net.get('mixer_layers')}")
+            if net.get("enc_blocks") not in (4, None):
+                tags.append(f"e{net.get('enc_blocks')}")
+        return fam + ("·" + "·".join(tags) if tags else "")
+
+    return ALIAS_OVERRIDE, core_alias
+
+
+@app.cell
+def _(ALIAS_OVERRIDE, ckpt_input, core_alias, json, pl):
     # Only these archs are streaming-state "sequence models"; resnet is the plain
     # channel-stacked net even though newer configs always serialise arch="resnet".
     SEQ_ARCHS = {"gru", "lstm", "transformer", "xlstm"}
@@ -232,6 +298,7 @@ def _(ckpt_input, json, pl):
                     "is_seq": arch in SEQ_ARCHS,
                     "arch": arch,
                     "signature": _signature(cfg),
+                    "core": core_alias(cfg),  # family + deviations, no seed
                     "blocks": net.get("blocks"),
                     "channels": net.get("channels"),
                     "history": enc.get("history"),
@@ -241,6 +308,24 @@ def _(ckpt_input, json, pl):
                     "enc_blocks": net.get("enc_blocks"),
                 }
             )
+
+        # Per-version alias: "<core>·s<seed>", uniquified by appending the bare
+        # version when two genuine re-runs share config+seed; overrides win.
+        from collections import Counter as _Counter
+
+        _auto = {
+            r["version"]: f"{r['core']}·s{r['seed']}"
+            for r in recs if r["version"] not in ALIAS_OVERRIDE
+        }
+        _clash = _Counter(_auto.values())
+        for r in recs:
+            v = r["version"]
+            if v in ALIAS_OVERRIDE:
+                r["alias"] = ALIAS_OVERRIDE[v]
+            else:
+                base = _auto[v]
+                r["alias"] = base if _clash[base] == 1 else f"{base} ({v})"
+
         df = pl.DataFrame(recs)
 
         # Group id: sequence runs by arch; others (incl. resnet) by shared signature.
@@ -262,13 +347,26 @@ def _(nets_lb, pl, versions):
     # actually appear in the leaderboard survive.
     nets = nets_lb.join(versions, on="version", how="inner").sort(["vsort", "step"])
 
+    # A net group's title is the config core its members share (e.g. "CNN·η0.5").
+    # A few early baseline configs collapse to the same core while differing on
+    # fields the alias doesn't surface (iteration_steps, batch, amp, ...), so when
+    # a core is used by more than one group we anchor it with the earliest version.
+    from collections import Counter as _Counter
+
+    _net_core = {
+        (gid[0] if isinstance(gid, tuple) else gid): sub["core"][0]
+        for gid, sub in nets.group_by("group_id")
+        if (gid[0] if isinstance(gid, tuple) else gid).startswith("net:")
+    }
+    _dupe_core = {c for c, k in _Counter(_net_core.values()).items() if k > 1}
+
     # Build human labels per group_id.
     def _group_label(gid: str, members) -> str:
         rows = members.sort("vsort")
         if gid.startswith("seq:"):
             return gid.split(":", 1)[1].upper()  # GRU / LSTM / TRANSFORMER / XLSTM
-        vs = rows["version"].to_list()
-        return "+".join(vs)  # e.g. v0.14.0+v0.27.0+v0.52.0+v0.53.0
+        core = rows["core"][0]
+        return f"{core} ({rows['version'][0]})" if core in _dupe_core else core
 
     def _group_kind(gid: str) -> str:
         return "sequence-model family" if gid.startswith("seq:") else "seed replicates"
@@ -309,6 +407,40 @@ def _(mo, nets, pl):
 
 
 @app.cell
+def _(mo, nets, pl):
+    # The alias table: the config-derived name every plot/table uses in place of
+    # the version number. One row per run, with the key hyper-params it encodes
+    # and how many checkpoints of it are on the ladder.
+    _alias_tbl = (
+        nets.group_by("version")
+        .agg(
+            pl.col("alias").first(),
+            pl.col("group").first().alias("group"),
+            pl.col("arch").first(),
+            pl.col("eta").first(),
+            pl.col("history").first(),
+            pl.col("lr").first(),
+            pl.col("seed").first(),
+            pl.col("step").n_unique().alias("checkpoints"),
+            pl.col("elo").max().alias("peak_elo"),
+            pl.col("vsort").first(),
+        )
+        .sort("vsort")
+        .select(
+            "version", "alias", "group", "arch", "eta", "history", "lr",
+            "seed", "checkpoints", "peak_elo",
+        )
+    )
+    mo.vstack(
+        [
+            mo.md("### Alias table — version ↔ name used everywhere below"),
+            mo.ui.table(_alias_tbl, selection=None, page_size=60),
+        ]
+    )
+    return
+
+
+@app.cell
 def _(mo):
     mo.md(r"""
     ## Full leaderboard
@@ -317,9 +449,19 @@ def _(mo):
 
 
 @app.cell
-def _(lb, mo):
+def _(lb, mo, nets, pl):
+    # Attach the run alias to each checkpoint row; baselines keep their own name.
+    _alias_of = dict(
+        nets.select("version", "alias").unique().iter_rows()
+    )
+    _lb2 = lb.with_columns(
+        pl.col("version")
+        .replace_strict(_alias_of, default=None)
+        .fill_null(pl.col("player"))
+        .alias("alias")
+    )
     mo.ui.table(
-        lb.select("player", "elo", "games", "score", "se", "version", "step")
+        _lb2.select("alias", "player", "elo", "games", "score", "se", "version", "step")
         .sort("elo", descending=True),
         selection=None,
         page_size=20,
@@ -351,11 +493,13 @@ def _(baselines_lb):
     }
     BASE_ELO = {r["player"]: r["elo"] for r in baselines_lb.iter_rows(named=True)}
 
-    def plot_group(ax, sub, band: bool, refs: bool, legend_versions: bool):
+    def plot_group(ax, sub, band: bool, refs: bool, legend_versions: bool = True):
         """Draw one group's Elo-vs-step curves onto `ax`.
 
         `sub` is the joined `nets` rows for a single group. One line per version
-        (a seed for replicate groups, a model variant for sequence families).
+        (a seed for replicate groups, a model variant for sequence families),
+        labelled by its config-derived alias. (`legend_versions` is retained for
+        call-site compatibility; the alias already carries seed/variant.)
         """
         versions = sub.sort("vsort")["version"].unique(maintain_order=True).to_list()
         for i, ver in enumerate(versions):
@@ -363,11 +507,7 @@ def _(baselines_lb):
             color = PALETTE[i % len(PALETTE)]
             xs = v["step"].to_list()
             ys = v["elo"].to_list()
-            seed = v["seed"][0]
-            if v["is_seq"][0]:  # sequence model: label by mixer/encoder depth
-                lbl = f"{ver} · mix{v['mixer_layers'][0]}/enc{v['enc_blocks'][0]}"
-            else:
-                lbl = f"{ver} · seed {seed}" if legend_versions else ver
+            lbl = v["alias"][0]
             ax.plot(xs, ys, "-o", ms=4, lw=2, color=color, label=lbl, zorder=3)
             if band:
                 lo = [e - s for e, s in zip(ys, v["se"].to_list())]
@@ -513,18 +653,39 @@ def _(mo):
     `v0.14.0` to compare the sweep against its reference run. The table lists each
     selection's seed, its assigned group, **how many checkpoints** it has on the
     ladder, and its peak Elo.
+
+    When the selected runs have **vastly different checkpoint lengths** the plot
+    gets lopsided, so the *checkpoint alignment* control trims the x-axis:
+
+      * **all checkpoints** — no trimming (every run drawn to its last step).
+      * **up to a chosen step** — drag the slider to a common cutoff; every run is
+        clipped to `step ≤ cutoff`.
+      * **shared range** — clip all runs to the shortest run's last step, so the
+        overlay only spans steps *every* selected run reached.
+      * **up to each run's best** — clip **each** run at its own peak-Elo step, so
+        no line extends past where that run stopped improving.
     """)
     return
 
 
 @app.cell
 def _(mo, nets):
-    _all = nets.sort("vsort")["version"].unique(maintain_order=True).to_list()
+    _rows = (
+        nets.select("version", "alias", "vsort").unique().sort("vsort")
+    )
+    _alias_by_ver = dict(zip(_rows["version"].to_list(), _rows["alias"].to_list()))
+    # Options map the displayed alias (label) -> version; `.value` returns versions.
+    _options = {a: v for v, a in _alias_by_ver.items()}
+    # Initial selection must be given as option LABELS (the aliases), not versions.
     # Default to the argmax self-play sweep (sampled 52/53 vs greedy 54/55).
-    _pref = [v for v in ("v0.52.0", "v0.53.0", "v0.54.0", "v0.55.0") if v in _all]
+    _pref = [
+        _alias_by_ver[v]
+        for v in ("v0.52.0", "v0.53.0", "v0.54.0", "v0.55.0")
+        if v in _alias_by_ver
+    ]
     ver_ms = mo.ui.multiselect(
-        options=_all,
-        value=_pref or _all[-4:],
+        options=_options,
+        value=_pref or _rows["alias"].to_list()[-4:],
         label="versions to compare",
     )
     ver_ms
@@ -532,9 +693,71 @@ def _(mo, nets):
 
 
 @app.cell
-def _(band_toggle, mo, nets, plot_group, plt, ref_toggle, ver_ms):
+def _(mo, nets, ver_ms):
+    # Checkpoint-alignment control for the overlay below. The slider is only used
+    # by the "up to a chosen step" mode; it snaps to exactly the checkpoint steps
+    # that actually exist across the selected runs (their union), so every stop is
+    # a real checkpoint of at least one selected model.
     _sel = list(ver_ms.value)
-    _sub = nets.filter(nets["version"].is_in(_sel)).sort(["vsort", "step"])
+    _steps = sorted(
+        nets.filter(nets["version"].is_in(_sel))["step"].unique().to_list()
+    ) if _sel else []
+
+    align_dd = mo.ui.dropdown(
+        options={
+            "all checkpoints": "all",
+            "up to a chosen step": "step",
+            "shared range (shortest run)": "shared",
+            "up to each run's best": "best",
+        },
+        value="all checkpoints",
+        label="checkpoint alignment",
+    )
+    cutoff_slider = mo.ui.slider(
+        steps=_steps or [0], value=(_steps[-1] if _steps else 0),
+        label="cutoff step", show_value=True,
+    )
+    mo.hstack([align_dd, cutoff_slider], justify="start", gap=2)
+    return align_dd, cutoff_slider
+
+
+@app.cell
+def _(align_dd, cutoff_slider, nets, pl, ver_ms):
+    # Apply the chosen alignment to the selected versions -> `aligned_sub`, the
+    # single frame consumed by both the overlay plot and the comparison table.
+    _sel = list(ver_ms.value)
+    aligned_sub = nets.filter(nets["version"].is_in(_sel)).sort(["vsort", "step"])
+    _mode = align_dd.value
+    if aligned_sub.height:
+        if _mode == "step":
+            aligned_sub = aligned_sub.filter(pl.col("step") <= cutoff_slider.value)
+        elif _mode == "shared":
+            # Trim every run to the shortest run's last step.
+            _cut = (
+                aligned_sub.group_by("version")
+                .agg(pl.col("step").max().alias("m"))["m"].min()
+            )
+            aligned_sub = aligned_sub.filter(pl.col("step") <= _cut)
+        elif _mode == "best":
+            # Trim each run at its own earliest peak-Elo step.
+            _best = aligned_sub.group_by("version").agg(
+                pl.col("step")
+                .filter(pl.col("elo") == pl.col("elo").max())
+                .min()
+                .alias("_bstep")
+            )
+            aligned_sub = (
+                aligned_sub.join(_best, on="version")
+                .filter(pl.col("step") <= pl.col("_bstep"))
+                .drop("_bstep")
+            )
+    return (aligned_sub,)
+
+
+@app.cell
+def _(aligned_sub, band_toggle, mo, plot_group, plt, ref_toggle, ver_ms):
+    _sel = list(ver_ms.value)
+    _sub = aligned_sub
     if _sub.height == 0:
         _out = mo.md("_pick at least one version above._")
     else:
@@ -555,12 +778,14 @@ def _(band_toggle, mo, nets, plot_group, plt, ref_toggle, ver_ms):
 
 
 @app.cell
-def _(mo, nets, pl, ver_ms):
-    _sel = list(ver_ms.value)
+def _(aligned_sub, mo, pl):
+    # Counts/peaks are computed over `aligned_sub`, so they reflect the trimmed
+    # x-range currently shown in the overlay above.
     _tbl = (
-        nets.filter(nets["version"].is_in(_sel))
+        aligned_sub
         .group_by("version")
         .agg(
+            pl.col("alias").first(),
             pl.col("seed").first(),
             pl.col("group").first().alias("group"),
             pl.col("group_kind").first(),
@@ -570,7 +795,10 @@ def _(mo, nets, pl, ver_ms):
             pl.col("vsort").first(),
         )
         .sort("vsort")
-        .drop("vsort")
+        .select(
+            "version", "alias", "seed", "group", "group_kind",
+            "checkpoints", "last_step", "peak_elo",
+        )
     )
     mo.ui.table(_tbl, selection=None, page_size=20)
     return
@@ -592,6 +820,7 @@ def _(REF, baselines_lb, nets, pl, plt):
     _peak = (
         nets.group_by("version")
         .agg(
+            pl.col("alias").first(),
             pl.col("elo").max().alias("peak_elo"),
             pl.col("group").first(),
             pl.col("group_kind").first(),
@@ -613,7 +842,7 @@ def _(REF, baselines_lb, nets, pl, plt):
         height=0.72, zorder=3,
     )
     _ax.set_yticks(list(_y))
-    _ax.set_yticklabels(_peak["version"].to_list(), fontsize=7)
+    _ax.set_yticklabels(_peak["alias"].to_list(), fontsize=7)
     from matplotlib.patches import Patch
 
     _ax.legend(
