@@ -13,11 +13,23 @@ curve measured against the whole field rather than against fixed baselines.
 
 Runs are grouped for plotting:
 
-  * **Seed replicates** -- versions whose configs are byte-identical except for
-    the RNG seed share one graph (each seed a separate line).
-  * **Sequence-model families** -- the RNN/attention runs (network.arch present)
-    are grouped by *model type* (gru / lstm / transformer); every version of a
-    type shares one graph regardless of its other hyper-params.
+  * **Seed replicates** -- versions whose configs match once the RNG seed, paths,
+    idle/electricity schedule and pure schema-drift defaults are normalised out
+    share one graph (each seed a separate line). This includes the channel-stacked
+    `resnet` runs; `network.arch == "resnet"` is NOT a sequence model even though
+    newer configs always serialise an `arch` field.
+  * **Sequence-model families** -- only the streaming-state archs
+    (gru / lstm / transformer / xlstm) are grouped by *model type*; every version
+    of a type shares one graph regardless of its other hyper-params.
+
+Config schema has drifted over the project's life (later runs serialise fields
+that early runs never had: `arch`, the temporal-mixer knobs, the lr-schedule
+knobs, `selfplay_sample`, ...). To keep a run grouped with its same-experiment
+replicates across that drift, the signature drops the temporal-only fields and
+back-fills the post-hoc fields with the value an old run implicitly ran at
+(e.g. `selfplay_sample=True`, `lr_schedule="constant"`) before hashing. So
+v0.14.0 and its later argmax-sweep re-runs v0.52/0.53 land in one group, while
+the greedy arm v0.54/0.55 (`selfplay_sample=False`) forms its own.
 
 Elo is read from the rendered leaderboard text (the canonical, anchored fit);
 grouping is read from each run's `checkpoints/v*/config.json`. All frames are
@@ -147,11 +159,39 @@ def _(mo):
 
 @app.cell
 def _(ckpt_input, json, pl):
-    # Fields that never define an "experiment": the seed itself, filesystem paths,
-    # the device, and pure bookkeeping (progress bars, checkpoint cadence, length).
+    # Only these archs are streaming-state "sequence models"; resnet is the plain
+    # channel-stacked net even though newer configs always serialise arch="resnet".
+    SEQ_ARCHS = {"gru", "lstm", "transformer", "xlstm"}
+
+    # Leaf config keys that never define a resnet "experiment", so they must not
+    # split a run from its replicates:
+    #   * seed / paths / device / bookkeeping (progress, cadence, run length)
+    #   * fork_source (provenance only)
+    #   * the idle/electricity schedule -- WHEN the rig trains, not what it learns
+    #   * eval-only knobs -- how the fitted net is *scored*, not how it trained
+    #   * the temporal-mixer fields -- ignored by resnet; sequence runs are grouped
+    #     by arch (their signature is never consulted), so drop them everywhere
+    #   * arch itself -- handled by the seq/net group prefix, not the signature
     _DROP = {
         "seed", "metrics_path", "checkpoint_dir", "resume", "device",
-        "progress", "checkpoint_every", "total_iters",
+        "progress", "checkpoint_every", "total_iters", "fork_source",
+        "idle_schedule", "train_start_hour", "train_stop_hour", "train_days",
+        "eval_every", "eval_games", "eval_sample", "eval_opponents",
+        "arch", "enc_blocks", "mixer_dim", "mixer_layers", "nhead", "max_seq",
+        "xlstm_slstm_at", "xlstm_conv_kernel",
+    }
+
+    # Fields added to the config schema after the earliest runs. A config that
+    # predates a field implicitly ran at this value, so back-fill it before hashing
+    # -- otherwise pure schema drift would split a run from its newer-schema, same-
+    # experiment replicates (this is exactly what put v0.14.0 and its argmax-sweep
+    # re-runs v0.52/0.53 in different groups). Keyed by "<section>.<leaf>".
+    _BACKFILL = {
+        "rnad.lr_schedule": "constant",
+        "rnad.lr_warmup": 0,
+        "rnad.lr_decay_start": 0,
+        "rnad.lr_min": 0.0,
+        "train.selfplay_sample": True,
     }
 
     def _signature(cfg: dict) -> str:
@@ -161,6 +201,8 @@ def _(ckpt_input, json, pl):
             for k, v in sub.items()
             if k not in _DROP
         }
+        for key, default in _BACKFILL.items():
+            flat.setdefault(key, default)
         return json.dumps(flat, sort_keys=True)
 
     def _vkey(v: str) -> int:
@@ -180,13 +222,14 @@ def _(ckpt_input, json, pl):
             net, rnad, enc, train = (
                 cfg["network"], cfg["rnad"], cfg["encoding"], cfg["train"]
             )
-            arch = net.get("arch")  # present only on sequence-model runs
+            arch = net.get("arch")  # None on pre-arch configs; "resnet" or a seq arch
             recs.append(
                 {
                     "version": version,
                     "vsort": _vkey(version),
                     "seed": train.get("seed"),
-                    "is_rnn": arch is not None,
+                    # resnet (and pre-arch configs) are NOT sequence models
+                    "is_seq": arch in SEQ_ARCHS,
                     "arch": arch,
                     "signature": _signature(cfg),
                     "blocks": net.get("blocks"),
@@ -200,10 +243,10 @@ def _(ckpt_input, json, pl):
             )
         df = pl.DataFrame(recs)
 
-        # Group id: sequence runs by arch; others by shared signature.
+        # Group id: sequence runs by arch; others (incl. resnet) by shared signature.
         df = df.with_columns(
-            pl.when(pl.col("is_rnn"))
-            .then("rnn:" + pl.col("arch"))
+            pl.when(pl.col("is_seq"))
+            .then("seq:" + pl.col("arch"))
             .otherwise("net:" + pl.col("signature"))
             .alias("group_id")
         )
@@ -222,13 +265,13 @@ def _(nets_lb, pl, versions):
     # Build human labels per group_id.
     def _group_label(gid: str, members) -> str:
         rows = members.sort("vsort")
-        if gid.startswith("rnn:"):
-            return gid.split(":", 1)[1].upper()  # GRU / LSTM / TRANSFORMER
+        if gid.startswith("seq:"):
+            return gid.split(":", 1)[1].upper()  # GRU / LSTM / TRANSFORMER / XLSTM
         vs = rows["version"].to_list()
-        return "+".join(vs)  # e.g. v0.14.0+v0.27.0
+        return "+".join(vs)  # e.g. v0.14.0+v0.27.0+v0.52.0+v0.53.0
 
     def _group_kind(gid: str) -> str:
-        return "sequence-model family" if gid.startswith("rnn:") else "seed replicates"
+        return "sequence-model family" if gid.startswith("seq:") else "seed replicates"
 
     _labels, _kinds, _sort = {}, {}, {}
     for gid, sub in nets.group_by("group_id"):
@@ -321,8 +364,7 @@ def _(baselines_lb):
             xs = v["step"].to_list()
             ys = v["elo"].to_list()
             seed = v["seed"][0]
-            arch = v["arch"][0]
-            if arch is not None:
+            if v["is_seq"][0]:  # sequence model: label by mixer/encoder depth
                 lbl = f"{ver} · mix{v['mixer_layers'][0]}/enc{v['enc_blocks'][0]}"
             else:
                 lbl = f"{ver} · seed {seed}" if legend_versions else ver
@@ -457,6 +499,80 @@ def _(band_toggle, group_dd, nets, plot_group, plt, ref_toggle):
     _ax.legend(fontsize=9, frameon=False, loc="lower right")
     _fig.tight_layout()
     _fig
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## Free version comparison
+
+    Pick **any** set of versions to overlay their Elo-vs-step curves on one axis,
+    regardless of group — e.g. select the argmax-sweep runs
+    `v0.52 / v0.53 / v0.54 / v0.55` (the default) to see the four together, or add
+    `v0.14.0` to compare the sweep against its reference run. The table lists each
+    selection's seed, its assigned group, **how many checkpoints** it has on the
+    ladder, and its peak Elo.
+    """)
+    return
+
+
+@app.cell
+def _(mo, nets):
+    _all = nets.sort("vsort")["version"].unique(maintain_order=True).to_list()
+    # Default to the argmax self-play sweep (sampled 52/53 vs greedy 54/55).
+    _pref = [v for v in ("v0.52.0", "v0.53.0", "v0.54.0", "v0.55.0") if v in _all]
+    ver_ms = mo.ui.multiselect(
+        options=_all,
+        value=_pref or _all[-4:],
+        label="versions to compare",
+    )
+    ver_ms
+    return (ver_ms,)
+
+
+@app.cell
+def _(band_toggle, mo, nets, plot_group, plt, ref_toggle, ver_ms):
+    _sel = list(ver_ms.value)
+    _sub = nets.filter(nets["version"].is_in(_sel)).sort(["vsort", "step"])
+    if _sub.height == 0:
+        _out = mo.md("_pick at least one version above._")
+    else:
+        _fig, _ax = plt.subplots(figsize=(10, 5.5))
+        plot_group(
+            _ax, _sub, band=band_toggle.value, refs=ref_toggle.value,
+            legend_versions=True,
+        )
+        _ax.set_title("Version comparison", fontsize=12, color="#0b0b0b")
+        _ax.set_xlabel("checkpoint step")
+        _ax.set_ylabel("internal Elo (random = 0)")
+        _ncol = 2 if len(_sel) > 4 else 1
+        _ax.legend(fontsize=8, frameon=False, loc="lower right", ncol=_ncol)
+        _fig.tight_layout()
+        _out = _fig
+    _out
+    return
+
+
+@app.cell
+def _(mo, nets, pl, ver_ms):
+    _sel = list(ver_ms.value)
+    _tbl = (
+        nets.filter(nets["version"].is_in(_sel))
+        .group_by("version")
+        .agg(
+            pl.col("seed").first(),
+            pl.col("group").first().alias("group"),
+            pl.col("group_kind").first(),
+            pl.col("step").n_unique().alias("checkpoints"),
+            pl.col("step").max().alias("last_step"),
+            pl.col("elo").max().alias("peak_elo"),
+            pl.col("vsort").first(),
+        )
+        .sort("vsort")
+        .drop("vsort")
+    )
+    mo.ui.table(_tbl, selection=None, page_size=20)
     return
 
 
