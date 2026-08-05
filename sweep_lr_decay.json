@@ -53,8 +53,8 @@
       3,
       4
     ],
-    "train.train_start_hour": 19,
-    "train.train_stop_hour": 6,
+    "train.train_start_hour": 17,
+    "train.train_stop_hour": 7,
     "train.traj_queue_size": 256,
     "train.weight_broadcast_every": 20
   },
