@@ -17,6 +17,10 @@ runs/
 # read/append it); metrics jsonl and checkpoints stay machine-local
 !results/tournament.jsonl
 
+# arena arm definitions (tools/policy_eval.py) -- a sidecar to a .jsonl that is
+# itself ignored, so tracking it alone would describe results nobody has
+**/*.arms.json
+
 
 # RBC server credentials (scripts/rc_connect.py)
 .env

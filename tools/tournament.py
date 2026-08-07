@@ -143,39 +143,10 @@ def _play_game(task):
 
 
 # -------------------------------------------------------------- leaderboard
-def bradley_terry(rows: list[dict], names: list[str]) -> dict[str, float]:
-    """Fit BT strengths (draws = half win each); return Elo, anchored at
-    random=0 if present, else mean 0."""
-    idx = {n: i for i, n in enumerate(names)}
-    n = len(names)
-    score = [0.0] * n                      # total score of player i
-    pair_n = [[0.0] * n for _ in range(n)]  # games between i and j
-    for r in rows:
-        if r["winner"] == "error" or r["white"] not in idx or r["black"] not in idx:
-            continue
-        w, b = idx[r["white"]], idx[r["black"]]
-        pair_n[w][b] += 1
-        pair_n[b][w] += 1
-        if r["winner"] == "draw":
-            score[w] += 0.5
-            score[b] += 0.5
-        else:
-            score[idx[r[r["winner"]]]] += 1.0
-
-    p = [1.0] * n
-    for _ in range(500):  # MM iterations
-        new = []
-        for i in range(n):
-            denom = sum(pair_n[i][j] / (p[i] + p[j]) for j in range(n) if j != i)
-            # clamp: undefeated/never-scoring players have no finite MLE
-            s = min(max(score[i], 0.5), sum(pair_n[i]) - 0.5) if sum(pair_n[i]) else 0.5
-            new.append(s / denom if denom else p[i])
-        norm = math.exp(sum(math.log(x) for x in new) / n)
-        p = [x / norm for x in new]
-
-    elo = {name: 400.0 * math.log10(p[i]) for name, i in idx.items()}
-    anchor = elo.get("random", sum(elo.values()) / len(elo))
-    return {name: e - anchor for name, e in elo.items()}
+# The BT fit lives in the package (deepnash_rbc.analysis.elo) so the policy-mode
+# arena, which places new agents on *this* ladder's scale, fits with exactly the
+# same estimator instead of a drifting copy.
+from deepnash_rbc.analysis.elo import bradley_terry  # noqa: E402
 
 
 def print_leaderboard(rows: list[dict], players: dict[str, str]):

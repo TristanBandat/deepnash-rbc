@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import pytest
 
+import json
+from pathlib import Path
+
 from deepnash_rbc.checkpoints import (
     bump_version,
+    ensure_version_config,
     existing_versions,
     next_free_version,
+    version_config_path,
 )
+from deepnash_rbc.config import Config
 
 
 def test_bump_levels():
@@ -43,6 +49,44 @@ def test_next_free_skips_existing_target():
 
 def test_next_free_uses_base_when_nothing_taken():
     assert next_free_version("minor", set(), base="0.2.0") == "0.3.0"
+
+
+def _pin(tmp_path, version, drop=(), **network):
+    """Write a v<version>/config.json, minus ``drop`` network fields."""
+    cfg = Config()
+    for k, v in network.items():
+        setattr(cfg.network, k, v)
+    ensure_version_config(str(tmp_path), cfg, version=version)
+    path = Path(version_config_path(str(tmp_path), version))
+    pinned = json.loads(path.read_text())
+    for f in drop:
+        pinned["network"].pop(f)
+    path.write_text(json.dumps(pinned, indent=2))
+
+
+def test_version_config_tolerates_fields_added_after_pinning(tmp_path):
+    # a pre-xLSTM config.json has no xlstm_* keys; resuming it must not trip the
+    # drift guard just because NetworkConfig grew those fields later
+    _pin(tmp_path, "0.41.0", drop=("xlstm_slstm_at", "xlstm_conv_kernel"), arch="gru")
+    cfg = Config()
+    cfg.network.arch = "gru"
+    ensure_version_config(str(tmp_path), cfg, version="0.41.0")  # must not raise
+
+
+def test_version_config_raises_on_arch_drift(tmp_path):
+    _pin(tmp_path, "0.41.0", drop=("xlstm_slstm_at", "xlstm_conv_kernel"), arch="gru")
+
+    cfg = Config()
+    cfg.network.arch = "gru"
+    cfg.network.mixer_dim = 256  # pinned field, changed -> shapes differ
+    with pytest.raises(RuntimeError, match="network config differs"):
+        ensure_version_config(str(tmp_path), cfg, version="0.41.0")
+
+    cfg = Config()
+    cfg.network.arch = "gru"
+    cfg.network.xlstm_conv_kernel = 8  # unpinned field, off default -> still drift
+    with pytest.raises(RuntimeError, match="network config differs"):
+        ensure_version_config(str(tmp_path), cfg, version="0.41.0")
 
 
 def test_campaign_plan_reserves_within_batch():
