@@ -67,10 +67,13 @@
       }
     },
     {
+      "_comment": "Resume: 'defaults' layer onto fresh runs only, so the idle window is repeated here -- without it this run replays v0.41.0's pinned 19-6 and trains 2h/night less than the fresh runs.",
       "name": "gru-v0.41-to-240k-wsd",
       "resume": "v0.41.0",
       "overrides": {
         "train.total_iters": 240000,
+        "train.train_start_hour": 17,
+        "train.train_stop_hour": 7,
         "rnad.lr_schedule": "wsd",
         "rnad.lr_decay_start": 160000,
         "rnad.lr_min": 1e-05
