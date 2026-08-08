@@ -1,0 +1,114 @@
+{
+  "_comment": "Model-scale campaign for the Transformer arch, plus one long-horizon GRU extension. Run with: uv run python scripts/train_campaign.py --sweep sweep_scale.json [--dry-run]. PURPOSE (transformer runs): every temporal run so far -- v0.40/v0.42/v0.44/v0.46 (batch 32) and v0.56/v0.57 (batch 64) -- used the SAME 1.67M-param body: channels=128, enc_blocks=4, mixer_dim=128, mixer_layers=2, nhead=4. Model size has therefore never been varied, so nothing in the ladder tests whether capacity is the binding constraint. These two runs add the missing size axis as a LADDER on top of v0.57.0 (transformer, batch 64, lr 1.4142e-4 cosine, 120k, seed 0): 1.67M (v0.57.0, already trained) -> 4.5M -> 12.0M params. 'defaults' below replicate v0.57.0's pinned config EXACTLY, so each run's 'overrides' contain nothing but network-size knobs and any Elo delta is attributable to size alone. WHY THE MIXER AND NOT THE CNN ENCODER: measured forward+backward on the real TemporalNet (T=192/B=8 and T=384/B=6, bf16 autocast, ratios stable across both) -- growing mixer_dim/mixer_layers is nearly free, growing channels/enc_blocks is not: d256/l4 = 2.7x params for 1.07x memory and 1.01x step time; d384/l6 = 7.2x params for 1.19x memory and 1.02x step time; but c160/e4 = 1.46x memory / 1.20x time and c128/e6 = 1.62x memory / 1.47x time at the SAME 7.2x params. The per-frame encoder pays its cost on every one of the T*B frames at 8x8 spatial resolution, while the mixer sees one D-vector per frame -- so on a 48 GB L40S, where the current batch=64 transformer already peaks at ~35 GB, the encoder axis simply does not fit at batch 64 (c160 would project to ~51 GB) and is deliberately not taken here. VRAM budget: 35 GB x measured 1.07 / 1.19 => ~37.5 GB and ~41.6 GB projected peak. Both projections are conservative: the measured ratio is applied to the whole 35 GB, but a large share of that (the fp32 [T,B,4673] move-logit tensors, the v-trace/NeuRD grouping) does not scale with model size at all. If a long-game batch ever spikes the allocator, run with PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True before shrinking anything. lr is deliberately NOT retuned for the larger models -- holding the optimizer fixed is what makes the delta a size effect; if the 12M run turns out unstable early, that is itself the finding and the retune becomes a follow-up.",
+  "defaults": {
+    "encoding.history": 1,
+    "network.arch": "transformer",
+    "network.blocks": 6,
+    "network.channels": 128,
+    "network.enc_blocks": 4,
+    "network.max_seq": 512,
+    "network.mixer_dim": 128,
+    "network.mixer_layers": 2,
+    "network.nhead": 4,
+    "network.value_hidden": 128,
+    "rnad.amp": true,
+    "rnad.c_clip": 1.0,
+    "rnad.compile_net": false,
+    "rnad.eta": 0.5,
+    "rnad.fast_learner": true,
+    "rnad.full_action_neurd": true,
+    "rnad.gamma": 1.0,
+    "rnad.grad_clip": 10.0,
+    "rnad.iteration_steps": 1000,
+    "rnad.lr": 0.00014142,
+    "rnad.lr_decay_start": 0,
+    "rnad.lr_min": 1e-05,
+    "rnad.lr_schedule": "cosine",
+    "rnad.lr_warmup": 4000,
+    "rnad.neurd_clip": 2.5,
+    "rnad.rho_clip": 1.0,
+    "rnad.value_coef": 1.0,
+    "train.async_actors": 16,
+    "train.batch_trajectories": 64,
+    "train.buffer_capacity": 4096,
+    "train.checkpoint_every": 10000,
+    "train.device": "cuda",
+    "train.drain_per_cycle": 64,
+    "train.eval_every": 0,
+    "train.eval_games": 50,
+    "train.eval_opponents": [
+      "random",
+      "attacker",
+      "trout"
+    ],
+    "train.games_per_iter": 8,
+    "train.idle_schedule": true,
+    "train.learner_steps_per_iter": 4,
+    "train.min_buffer_to_train": 64,
+    "train.num_actors": 1,
+    "train.prefetch_depth": 2,
+    "train.progress": true,
+    "train.seconds_per_player": 900.0,
+    "train.seed": 0,
+    "train.total_iters": 120000,
+    "train.train_days": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "train.train_start_hour": 17,
+    "train.train_stop_hour": 7,
+    "train.traj_queue_size": 256,
+    "train.weight_broadcast_every": 20
+  },
+  "runs": [
+    {
+      "_comment": "Rung 2 of the size ladder: mixer_dim 128->256, mixer_layers 2->4, nhead 4->8 (head_dim stays 32, so per-head capacity is unchanged and only the number of heads/width grows). 4.49M params = 2.69x v0.57.0, measured 1.07x memory (~37.5 GB projected) and 1.01x step time, i.e. ~10 h of learner time for 120k steps, same as v0.57.0. Run first: it is the cheap rung, and if it already fails to beat v0.57.0 that reframes what the 12M run is testing.",
+      "name": "tf-scale-d256-l4",
+      "bump": "minor",
+      "overrides": {
+        "network.mixer_dim": 256,
+        "network.mixer_layers": 4,
+        "network.nhead": 8
+      }
+    },
+    {
+      "_comment": "Rung 3: mixer_dim 128->384, mixer_layers 2->6, nhead 4->8 (head_dim 48). 12.03M params = 7.21x v0.57.0, measured 1.19x memory (~41.6 GB projected, ~6 GB of L40S headroom left) and 1.02x step time. This is the largest transformer that fits at batch 64 with margin: the next step up (d384/l8 = 15.6M) measures 1.28x -> ~45 GB projected, which is too close to 48 GB to risk a multi-day run on. value_hidden stays 128 and channels/enc_blocks stay 128/4 across BOTH rungs, so the ladder varies exactly one thing -- the temporal mixer.",
+      "name": "tf-scale-d384-l6",
+      "bump": "minor",
+      "overrides": {
+        "network.mixer_dim": 384,
+        "network.mixer_layers": 6,
+        "network.nhead": 8
+      }
+    },
+    {
+      "_comment": "Long-horizon extension of the GRU v0.41.0 (lr 1e-4, eta 0.5, batch 32) from 240k to 500k. Rationale: v0.41.0 was still IMPROVING when its previous horizon ran out -- Elo 666 @190k -> 691 @210k -> 693 @220k -> 695 @240k -- so 240k was a schedule limit, not a plateau. lr SCHEDULE: a resume replays v0.41.0's PINNED config.json as its base, and that file still records the original 80k run (lr 1e-4, schedule 'constant', idle window 19-6) -- the wsd schedule and 17-7 window of the 80k->240k extension live only in that extension's sweep entry, NOT on disk. So both must be restated here or this run would silently train at a flat 1e-4 on a 2h-shorter night. Restated as cosine over the FULL 0->500k horizon instead of continuing the old wsd: the previous segment annealed all the way down to lr_min=1e-5 by 240k, and 260k further steps at 1e-5 would buy almost nothing. Because lr_at_step derives lr from the absolute step, cosine(0->500k) resumes at ~5.8e-5 -- a mild warm restart, still well under the 1e-4 peak -- then anneals smoothly back to 1e-5 at 500k. Note this restart is a genuine lr discontinuity (1e-5 -> 5.8e-5 at the resume step); it is the intended cost of extending an already-annealed run, and the alternative (wsd holding a flat 1e-4 until 340k) restarts 10x harder. ~260k steps at v0.41.0's measured ~0.16 s/step is ~11.5 h of learner time.",
+      "name": "gru-v0.41-to-500k-cosine",
+      "resume": "v0.41.0",
+      "overrides": {
+        "train.total_iters": 500000,
+        "train.train_start_hour": 17,
+        "train.train_stop_hour": 7,
+        "rnad.lr_schedule": "cosine",
+        "rnad.lr_warmup": 0,
+        "rnad.lr_min": 1e-05
+      }
+    }
+  ],
+  "tournament": {
+    "pair_games": 8,
+    "baselines": [
+      "random",
+      "trout",
+      "mht"
+    ],
+    "incumbents": 5,
+    "keep_top": null,
+    "workers": 8,
+    "threshold": 0.05,
+    "out": "results/tournament.jsonl"
+  }
+}
