@@ -35,6 +35,21 @@ Elo is read from the rendered leaderboard text (the canonical, anchored fit);
 grouping is read from each run's `checkpoints/v*/config.json`. All frames are
 polars.
 
+**Checkpoint steps are normalised for batch size.** A checkpoint's raw step is
+the learner *iteration* count, but not every run consumes the same data per
+iteration: `train.batch_trajectories` is 32 for the bulk of the ladder, 16 for
+the earliest runs (v0.2-v0.6) and 64 for the newer scaled runs (v0.56/v0.57,
+which correspondingly halve `total_iters`). Plotting raw steps would therefore
+put runs on incomparable x-axes, so every step is rescaled to
+**batch-32-equivalent steps**
+
+    xstep = step * batch_trajectories / 32
+
+i.e. the x-axis counts trajectories consumed by the learner, in units of the
+batch-32 step. All other per-iteration knobs (`learner_steps_per_iter=4`,
+`games_per_iter=8`) are constant across the ladder, so batch is the only factor.
+Runs whose batch differs from 32 also carry a `B<n>` tag in their alias.
+
 Run:  uv run --group notebooks marimo edit notebooks/tournament_elo.py
 """
 
@@ -66,6 +81,11 @@ def _(mo):
     the fixed baselines; it is anchored so **random = 0**. For each run we plot
     Elo against checkpoint step -- the internal skill curve -- and overlay the
     `trout` and `mht` baselines as reference lines.
+
+    Steps are **normalised for learner batch size**: the x-axis is
+    `step × batch_trajectories / 32`, so a batch-64 run at 60k iterations sits at
+    the same x as a batch-32 run at 120k -- both have consumed the same number of
+    trajectories. Runs off the batch-32 baseline carry a `B<n>` alias tag.
     """)
     return
 
@@ -175,6 +195,7 @@ def _():
     #     c<c>     conv channels           (baseline 128)
     #     b<n>     residual blocks         (baseline 6)
     #     lr1e-4   peak learning rate      (baseline 5e-5)
+    #     B<n>     learner batch trajectories (baseline 32)
     #     greedy   argmax self-play        (baseline = sampled)
     #     L<n>     mixer layers   (sequence only, baseline 2)
     #     e<n>     encoder blocks (sequence only, baseline 4)
@@ -211,6 +232,10 @@ def _():
             tags.append(f"b{net.get('blocks')}")
         if rnad.get("lr") != 5e-5:
             tags.append("lr1e-4")
+        # Batch is normalised out of the x-axis (see BATCH_REF), but it still is a
+        # config deviation, so surface it in the name.
+        if train.get("batch_trajectories", 32) != 32:
+            tags.append(f"B{train.get('batch_trajectories')}")
         if train.get("selfplay_sample", True) is False:
             tags.append("greedy")
         if fam != "CNN":
@@ -304,6 +329,8 @@ def _(ALIAS_OVERRIDE, ckpt_input, core_alias, json, pl):
                     "history": enc.get("history"),
                     "eta": rnad.get("eta"),
                     "lr": rnad.get("lr"),
+                    # Learner batch; older configs that predate the field ran at 32.
+                    "batch": train.get("batch_trajectories", 32),
                     "mixer_layers": net.get("mixer_layers"),
                     "enc_blocks": net.get("enc_blocks"),
                 }
@@ -347,6 +374,19 @@ def _(nets_lb, pl, versions):
     # actually appear in the leaderboard survive.
     nets = nets_lb.join(versions, on="version", how="inner").sort(["vsort", "step"])
 
+    # --- batch-size normalisation of the x-axis -----------------------------
+    # `step` is the raw learner-iteration count in the checkpoint name, but runs
+    # differ in `train.batch_trajectories` (16 for v0.2-v0.6, 32 for most, 64 for
+    # the scaled v0.56/v0.57 which halve total_iters to compensate). Iteration
+    # counts are therefore NOT comparable across runs; trajectories consumed are.
+    # `xstep` rescales every step into batch-32-equivalent steps, and is what all
+    # plots, the cutoff slider and the tables below use in place of `step`.
+    BATCH_REF = 32
+    nets = nets.with_columns(
+        (pl.col("step") * pl.col("batch") // BATCH_REF).alias("xstep")
+    )
+    XLABEL = f"checkpoint step (batch-{BATCH_REF} equivalent)"
+
     # A net group's title is the config core its members share (e.g. "CNN·η0.5").
     # A few early baseline configs collapse to the same core while differing on
     # fields the alias doesn't surface (iteration_steps, batch, amp, ...), so when
@@ -383,7 +423,7 @@ def _(nets_lb, pl, versions):
         pl.col("group_id").replace_strict(_kinds).alias("group_kind"),
     )
     group_order = sorted(_labels, key=lambda g: _sort[g])
-    return group_order, nets
+    return XLABEL, group_order, nets
 
 
 @app.cell
@@ -420,15 +460,18 @@ def _(mo, nets, pl):
             pl.col("eta").first(),
             pl.col("history").first(),
             pl.col("lr").first(),
+            pl.col("batch").first(),
             pl.col("seed").first(),
             pl.col("step").n_unique().alias("checkpoints"),
+            pl.col("step").max().alias("last_step"),
+            pl.col("xstep").max().alias("last_xstep"),
             pl.col("elo").max().alias("peak_elo"),
             pl.col("vsort").first(),
         )
         .sort("vsort")
         .select(
-            "version", "alias", "group", "arch", "eta", "history", "lr",
-            "seed", "checkpoints", "peak_elo",
+            "version", "alias", "group", "arch", "eta", "history", "lr", "batch",
+            "seed", "checkpoints", "last_step", "last_xstep", "peak_elo",
         )
     )
     mo.vstack(
@@ -500,12 +543,15 @@ def _(baselines_lb):
         (a seed for replicate groups, a model variant for sequence families),
         labelled by its config-derived alias. (`legend_versions` is retained for
         call-site compatibility; the alias already carries seed/variant.)
+
+        x is `xstep`, the batch-32-normalised step -- never the raw `step`, which
+        is not comparable between runs of different `batch_trajectories`.
         """
         versions = sub.sort("vsort")["version"].unique(maintain_order=True).to_list()
         for i, ver in enumerate(versions):
-            v = sub.filter(sub["version"] == ver).sort("step")
+            v = sub.filter(sub["version"] == ver).sort("xstep")
             color = PALETTE[i % len(PALETTE)]
-            xs = v["step"].to_list()
+            xs = v["xstep"].to_list()
             ys = v["elo"].to_list()
             lbl = v["alias"][0]
             ax.plot(xs, ys, "-o", ms=4, lw=2, color=color, label=lbl, zorder=3)
@@ -544,7 +590,7 @@ def _(mo):
 
 
 @app.cell
-def _(band_toggle, group_order, mo, nets, plot_group, plt, ref_toggle):
+def _(XLABEL, band_toggle, group_order, mo, nets, plot_group, plt, ref_toggle):
     def small_multiples(kind: str, ncols: int):
         gids = [g for g in group_order]
         subs = []
@@ -569,7 +615,7 @@ def _(band_toggle, group_order, mo, nets, plot_group, plt, ref_toggle):
             ax.legend(fontsize=6.5, frameon=False, loc="lower right")
         for ax in flat[len(subs):]:
             ax.set_visible(False)
-        fig.supxlabel("checkpoint step", fontsize=9)
+        fig.supxlabel(XLABEL, fontsize=9)
         fig.supylabel("internal Elo (random = 0)", fontsize=9)
         fig.tight_layout()
         return fig
@@ -622,7 +668,7 @@ def _(group_order, mo, nets):
 
 
 @app.cell
-def _(band_toggle, group_dd, nets, plot_group, plt, ref_toggle):
+def _(XLABEL, band_toggle, group_dd, nets, plot_group, plt, ref_toggle):
     _gid = group_dd.value
     _sub = nets.filter(nets["group_id"] == _gid)
     _fig, _ax = plt.subplots(figsize=(9, 5))
@@ -634,7 +680,7 @@ def _(band_toggle, group_dd, nets, plot_group, plt, ref_toggle):
         f"{_sub['group'][0]}  —  {_sub['group_kind'][0]}",
         fontsize=12, color="#0b0b0b",
     )
-    _ax.set_xlabel("checkpoint step")
+    _ax.set_xlabel(XLABEL)
     _ax.set_ylabel("internal Elo (random = 0)")
     _ax.legend(fontsize=9, frameon=False, loc="lower right")
     _fig.tight_layout()
@@ -659,11 +705,16 @@ def _(mo):
 
       * **all checkpoints** — no trimming (every run drawn to its last step).
       * **up to a chosen step** — drag the slider to a common cutoff; every run is
-        clipped to `step ≤ cutoff`.
+        clipped to `xstep ≤ cutoff`.
       * **shared range** — clip all runs to the shortest run's last step, so the
         overlay only spans steps *every* selected run reached.
       * **up to each run's best** — clip **each** run at its own peak-Elo step, so
         no line extends past where that run stopped improving.
+
+    All four operate on the **batch-32-normalised** step `xstep`, so a batch-64
+    run at 60k iterations is aligned against a batch-32 run at 120k iterations —
+    the point where both have consumed the same number of trajectories. The table
+    lists each run's raw `batch` alongside its normalised `last_xstep`.
     """)
     return
 
@@ -695,12 +746,12 @@ def _(mo, nets):
 @app.cell
 def _(mo, nets, ver_ms):
     # Checkpoint-alignment control for the overlay below. The slider is only used
-    # by the "up to a chosen step" mode; it snaps to exactly the checkpoint steps
-    # that actually exist across the selected runs (their union), so every stop is
-    # a real checkpoint of at least one selected model.
+    # by the "up to a chosen step" mode; it snaps to exactly the (batch-normalised)
+    # checkpoint steps that actually exist across the selected runs (their union),
+    # so every stop is a real checkpoint of at least one selected model.
     _sel = list(ver_ms.value)
     _steps = sorted(
-        nets.filter(nets["version"].is_in(_sel))["step"].unique().to_list()
+        nets.filter(nets["version"].is_in(_sel))["xstep"].unique().to_list()
     ) if _sel else []
 
     align_dd = mo.ui.dropdown(
@@ -715,7 +766,7 @@ def _(mo, nets, ver_ms):
     )
     cutoff_slider = mo.ui.slider(
         steps=_steps or [0], value=(_steps[-1] if _steps else 0),
-        label="cutoff step", show_value=True,
+        label="cutoff step (batch-32 equivalent)", show_value=True,
     )
     mo.hstack([align_dd, cutoff_slider], justify="start", gap=2)
     return align_dd, cutoff_slider
@@ -725,37 +776,39 @@ def _(mo, nets, ver_ms):
 def _(align_dd, cutoff_slider, nets, pl, ver_ms):
     # Apply the chosen alignment to the selected versions -> `aligned_sub`, the
     # single frame consumed by both the overlay plot and the comparison table.
+    # Every cut is on `xstep` (batch-32-normalised), so runs at different batch
+    # sizes are trimmed at equal trajectories consumed, not equal iterations.
     _sel = list(ver_ms.value)
-    aligned_sub = nets.filter(nets["version"].is_in(_sel)).sort(["vsort", "step"])
+    aligned_sub = nets.filter(nets["version"].is_in(_sel)).sort(["vsort", "xstep"])
     _mode = align_dd.value
     if aligned_sub.height:
         if _mode == "step":
-            aligned_sub = aligned_sub.filter(pl.col("step") <= cutoff_slider.value)
+            aligned_sub = aligned_sub.filter(pl.col("xstep") <= cutoff_slider.value)
         elif _mode == "shared":
             # Trim every run to the shortest run's last step.
             _cut = (
                 aligned_sub.group_by("version")
-                .agg(pl.col("step").max().alias("m"))["m"].min()
+                .agg(pl.col("xstep").max().alias("m"))["m"].min()
             )
-            aligned_sub = aligned_sub.filter(pl.col("step") <= _cut)
+            aligned_sub = aligned_sub.filter(pl.col("xstep") <= _cut)
         elif _mode == "best":
             # Trim each run at its own earliest peak-Elo step.
             _best = aligned_sub.group_by("version").agg(
-                pl.col("step")
+                pl.col("xstep")
                 .filter(pl.col("elo") == pl.col("elo").max())
                 .min()
                 .alias("_bstep")
             )
             aligned_sub = (
                 aligned_sub.join(_best, on="version")
-                .filter(pl.col("step") <= pl.col("_bstep"))
+                .filter(pl.col("xstep") <= pl.col("_bstep"))
                 .drop("_bstep")
             )
     return (aligned_sub,)
 
 
 @app.cell
-def _(aligned_sub, band_toggle, mo, plot_group, plt, ref_toggle, ver_ms):
+def _(XLABEL, aligned_sub, band_toggle, mo, plot_group, plt, ref_toggle, ver_ms):
     _sel = list(ver_ms.value)
     _sub = aligned_sub
     if _sub.height == 0:
@@ -767,7 +820,7 @@ def _(aligned_sub, band_toggle, mo, plot_group, plt, ref_toggle, ver_ms):
             legend_versions=True,
         )
         _ax.set_title("Version comparison", fontsize=12, color="#0b0b0b")
-        _ax.set_xlabel("checkpoint step")
+        _ax.set_xlabel(XLABEL)
         _ax.set_ylabel("internal Elo (random = 0)")
         _ncol = 2 if len(_sel) > 4 else 1
         _ax.legend(fontsize=8, frameon=False, loc="lower right", ncol=_ncol)
@@ -789,15 +842,17 @@ def _(aligned_sub, mo, pl):
             pl.col("seed").first(),
             pl.col("group").first().alias("group"),
             pl.col("group_kind").first(),
+            pl.col("batch").first(),
             pl.col("step").n_unique().alias("checkpoints"),
             pl.col("step").max().alias("last_step"),
+            pl.col("xstep").max().alias("last_xstep"),
             pl.col("elo").max().alias("peak_elo"),
             pl.col("vsort").first(),
         )
         .sort("vsort")
         .select(
-            "version", "alias", "seed", "group", "group_kind",
-            "checkpoints", "last_step", "peak_elo",
+            "version", "alias", "seed", "group", "group_kind", "batch",
+            "checkpoints", "last_step", "last_xstep", "peak_elo",
         )
     )
     mo.ui.table(_tbl, selection=None, page_size=20)
