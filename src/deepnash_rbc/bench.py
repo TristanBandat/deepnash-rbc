@@ -52,7 +52,7 @@ import torch.multiprocessing as mp
 
 from . import config as config_mod
 from .async_train import BatchPrefetcher, actor_loop
-from .checkpoints import existing_versions, read_version_config
+from .checkpoints import existing_versions, find_latest_checkpoint, read_version_config
 from .cli import _apply_overrides
 from .config import Config, config_from_dict
 from .network import make_net
@@ -72,12 +72,30 @@ def _sync(device: torch.device) -> None:
 
 
 # -- one real-training-loop measurement at a fixed actor count ----------------
+def load_actor_weights(net, path: Optional[str]) -> Optional[str]:
+    """Put trained weights on the bench net, because game length is policy-dependent.
+
+    A randomly initialized agent does not find the opponent king, so its games run
+    to the move limit; a trained one finishes fast. Measured on v0.43.0: 135
+    decisions per trajectory at init vs 34.7 trained -- a 3.8x difference in
+    trajectories/s from policy strength alone. Benchmarking with init weights
+    therefore understates actor throughput several-fold and, through
+    ``fresh_per_step``, corrupts every derived off-policy number.
+    """
+    if not path:
+        return None
+    state = torch.load(path, map_location="cpu", weights_only=False)
+    net.load_state_dict(state["net"] if "net" in state else state)
+    return path
+
+
 def measure_training(
     cfg: Config,
     n_actors: int,
     warmup_s: float,
     measure_s: float,
     fast: Optional[bool] = None,
+    weights: Optional[str] = None,
 ) -> Dict[str, float]:
     """Run the actual async loop (GPU learner + ``n_actors`` CPU actors) and time it.
 
@@ -101,7 +119,9 @@ def measure_training(
     ctx = mp.get_context("spawn")
     device = resolve_device(cfg.train.device)
 
-    net = make_net(cfg.encoding, cfg.network).to(device)
+    net = make_net(cfg.encoding, cfg.network)
+    load_actor_weights(net, weights)   # before .to(device): actors get these too
+    net = net.to(device)
     learner = RNaDLearner(cfg, net, device, fast=fast)
     buffer = ReplayBuffer(cfg.train.buffer_capacity)
 
@@ -131,6 +151,8 @@ def measure_training(
     acc = {"gpu": 0.0, "wait": 0.0, "host": 0.0}
     steps = traj = q_samples = 0
     q_occ_sum = q_occ_max = 0.0
+    buf_sum = 0.0
+    buf_min = float("inf")
     qmax = float(cfg.train.traj_queue_size)
     cap = cfg.train.traj_queue_size
 
@@ -215,6 +237,9 @@ def measure_training(
                 frac = occ / qmax if qmax else 0.0
                 q_occ_sum += frac
                 q_occ_max = max(q_occ_max, frac)
+                filled = len(buffer)
+                buf_sum += filled
+                buf_min = min(buf_min, filled)
         wall = _now() - measure_start
     finally:
         if prefetcher is not None:
@@ -259,6 +284,14 @@ def measure_training(
         "q_occ_avg": round(q_occ_sum / q_samples, 3) if q_samples else 0.0,
         "q_occ_max": round(q_occ_max, 3),
         "q_cap": cap,
+        "weights": os.path.basename(weights) if weights else "random-init",
+        # A window this short cannot fill a 4096-trajectory buffer, and
+        # ReplayBuffer.sample() silently returns fewer than batch_trajectories
+        # when it is under-filled -- cheaper, faster steps, so steps_per_s comes
+        # out inflated and fresh_per_step deflated. Flag it rather than pretend.
+        "buffer_avg": round(buf_sum / q_samples, 1) if q_samples else 0.0,
+        "buffer_min": 0 if buf_min == float("inf") else int(buf_min),
+        "batch_starved": bool(q_samples and buf_min < cfg.train.batch_trajectories),
     }
 
 
@@ -341,6 +374,8 @@ def recommend(rows: List[Dict[str, float]], fresh_target: float,
     best_fresh = max(rows, key=lambda r: r["fresh_per_step"])
 
     def viable(r):
+        if r.get("batch_starved"):
+            return False  # steps_per_s inflated by short batches; row is not comparable
         if r["fresh_per_step"] < fresh_target or r["q_occ_max"] >= 0.95:
             return False
         return horizon_target is None or r["horizon_steps"] <= horizon_target
@@ -394,17 +429,29 @@ def recommend(rows: List[Dict[str, float]], fresh_target: float,
             "horizon_steps": knee["horizon_steps"],
             "reuse": knee["reuse"],
         }
-    return {
-        "async_actors": best_horizon["actors"],
-        "actor_games": best_horizon["actor_games"],
-        "reason": (
+    if horizon_target is not None:
+        suggested = int(best_horizon["buffer_capacity"] * horizon_target
+                        / max(best_horizon["horizon_steps"], 1e-9))
+        reason = (
             f"no config reached the {horizon_target:.0f}-step horizon target; the best is "
             f"{best_horizon['horizon_steps']:.0f} steps at "
             f"{best_horizon['actors']}x{best_horizon['actor_games']} (reuse {best_horizon['reuse']}x). "
             f"Actor throughput is one lever on the horizon; buffer_capacity is the other and "
-            f"costs no cores -- try --set train.buffer_capacity="
-            f"{int(best_horizon['buffer_capacity'] * horizon_target / max(best_horizon['horizon_steps'], 1e-9))}."
-        ),
+            f"costs no cores -- try --set train.buffer_capacity={suggested}."
+        )
+    else:
+        # freshness was met somewhere, so the exclusions were queue saturation or
+        # short-batch rows -- say so rather than implying an unreachable target
+        reason = (
+            f"every config was excluded as not measurable or over-provisioned "
+            f"(short batches / saturated queue); reporting the freshest, "
+            f"{best_horizon['actors']}x{best_horizon['actor_games']}. Re-run with a longer "
+            f"--warmup/--measure so the buffer clears batch_trajectories."
+        )
+    return {
+        "async_actors": best_horizon["actors"],
+        "actor_games": best_horizon["actor_games"],
+        "reason": reason,
         "actor_bound": False,
         "horizon_steps": best_horizon["horizon_steps"],
         "reuse": best_horizon["reuse"],
@@ -449,13 +496,15 @@ def describe_config(cfg: Config) -> str:
 
 def run_bench(cfg: Config, counts: List[int], warmup_s: float, measure_s: float,
               fresh_target: float, games_counts: Optional[List[int]] = None,
-              horizon_target: Optional[float] = None) -> Dict:
+              horizon_target: Optional[float] = None,
+              weights: Optional[str] = None) -> Dict:
     cores = os.cpu_count() or 0
     device = resolve_device(cfg.train.device)
     games_counts = games_counts or [max(1, cfg.train.actor_games)]
     print(f"[bench] cores={cores} learner_device={device} counts={counts} "
           f"actor_games={games_counts} warmup={warmup_s}s measure={measure_s}s")
     print(f"[bench] config: {describe_config(cfg)}")
+    print(f"[bench] actor weights: {weights or 'RANDOM INIT (see warning below)'}")
     if horizon_target is not None:
         print(f"[bench] targets: fresh/step >= {fresh_target}, "
               f"off-policy horizon <= {horizon_target:.0f} learner steps")
@@ -472,7 +521,7 @@ def run_bench(cfg: Config, counts: List[int], warmup_s: float, measure_s: float,
         for c in counts:
             print(f"[bench] running real training loop with {c} actors "
                   f"x {games} games ...", flush=True)
-            row = measure_training(cfg, c, warmup_s, measure_s)
+            row = measure_training(cfg, c, warmup_s, measure_s, weights=weights)
             rows.append(row)
             print(f"        steps/s={row['steps_per_s']}  gpu_step={row['gpu_step_ms']}ms "
                   f"({row['gpu_busy_frac']*100:.0f}% busy, {row['data_wait_frac']*100:.0f}% waiting on data)  "
@@ -494,10 +543,14 @@ def print_grid(rows: List[Dict[str, float]], cores: int) -> None:
     print(f"\n=== grid ({len(rows)} configs) ===")
     print(f"{'actors':>6} {'games':>6} {'conc':>5} {'cores%':>7} {'steps/s':>8} "
           f"{'traj/s':>8} {'fresh':>7} {'horizon':>8} {'reuse':>6} {'gpu%':>5} "
-          f"{'wait%':>6} {'queue%':>7}  verdict")
+          f"{'wait%':>6} {'queue%':>7} {'buf':>7}  verdict")
+    starved = 0
     for r in sorted(rows, key=_cost):
         pct = 100 * r["actors"] / cores if cores else float("nan")
-        if r["data_wait_frac"] > 0.25:
+        if r.get("batch_starved"):
+            verdict = "INVALID: buffer below batch size"
+            starved += 1
+        elif r["data_wait_frac"] > 0.25:
             verdict = "actor-bound (GPU idle on data)"
         elif r["q_occ_max"] >= 0.95:
             verdict = "queue saturated (dropping games)"
@@ -509,7 +562,19 @@ def print_grid(rows: List[Dict[str, float]], cores: int) -> None:
               f"{pct:>6.0f}% {r['steps_per_s']:>8.2f} {r['traj_per_s']:>8.2f} "
               f"{r['fresh_per_step']:>7.2f} {r['horizon_steps']:>8.0f} {r['reuse']:>5.1f}x "
               f"{r['gpu_busy_frac']*100:>4.0f}% {r['data_wait_frac']*100:>5.0f}% "
-              f"{r['q_occ_max']*100:>6.0f}%  {verdict}")
+              f"{r['q_occ_max']*100:>6.0f}% {r.get('buffer_avg', 0):>7.0f}  {verdict}")
+
+    if starved:
+        print(f"\n[bench] WARNING: {starved}/{len(rows)} rows ran with the buffer below "
+              f"batch_trajectories. ReplayBuffer.sample() returns short batches there, so "
+              f"their steps/s is inflated and fresh/step deflated -- excluded from the pick. "
+              f"Raise --warmup/--measure, or lower --set train.buffer_capacity, to fix.")
+    weights = {r.get("weights", "random-init") for r in rows}
+    if weights == {"random-init"}:
+        print("[bench] WARNING: actors played with RANDOM-INIT weights. Untrained agents do "
+              "not finish games (measured 135 decisions/trajectory at init vs 34.7 trained), "
+              "so traj/s is understated several-fold and every off-policy number with it. "
+              "Pass --version (auto-loads that run's latest checkpoint) for usable numbers.")
 
 
 # -- write the pick into config.py -------------------------------------------
@@ -559,6 +624,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Path to a config.json manifest to benchmark (alternative to --version).")
     p.add_argument("--checkpoint-dir", default="checkpoints",
                    help="Where to look for v<VERSION>/config.json (default: checkpoints).")
+    p.add_argument("--weights", default="auto",
+                   help="Weights the bench actors play with: 'auto' (default) loads that "
+                        "version's latest checkpoint when --version is given, a path loads "
+                        "that checkpoint, 'none' uses random init. Game length depends "
+                        "strongly on policy strength (135 decisions/trajectory at init vs "
+                        "34.7 trained on v0.43.0), so random init understates actor "
+                        "throughput several-fold and corrupts every off-policy number.")
     p.add_argument("--set", dest="overrides", action="append", default=[], metavar="PATH=VALUE",
                    help="Override any config field by dotted path after loading, e.g. "
                         "--set train.buffer_capacity=2048. Repeatable. Useful for sweeping "
@@ -626,6 +698,24 @@ def load_bench_config(args) -> Config:
     return cfg
 
 
+def resolve_weights(args) -> Optional[str]:
+    """Which checkpoint the bench actors should play with (see load_actor_weights)."""
+    choice = (args.weights or "auto").strip()
+    if choice.lower() in {"none", "random", "init"}:
+        return None
+    if choice.lower() != "auto":
+        if not os.path.exists(choice):
+            raise SystemExit(f"--weights: no such checkpoint {choice}")
+        return choice
+    if not args.version:
+        return None  # nothing to auto-resolve against
+    path = find_latest_checkpoint(args.checkpoint_dir, version=args.version)
+    if path is None:
+        print(f"[bench] --weights auto: no checkpoint under {args.checkpoint_dir}/"
+              f"v{args.version}/; falling back to random init")
+    return path
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     args = build_parser().parse_args(argv)
     cfg = load_bench_config(args)
@@ -648,7 +738,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         if args.actor_games else None
     )
     report = run_bench(cfg, counts, args.warmup, args.measure, args.fresh_per_step,
-                       games_counts, args.max_horizon)
+                       games_counts, args.max_horizon, resolve_weights(args))
 
     rec = report["recommendation"]
     print("\n=== recommendation ===")

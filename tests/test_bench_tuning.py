@@ -83,13 +83,15 @@ def test_horizon_is_linear_in_actor_throughput():
     assert _horizon(cfg, 20.0) == pytest.approx(_horizon(cfg, 10.0) / 2)
 
 
-def _row(actors, games, fresh, *, steps=2.5, horizon=None, q=0.2, wait=0.05):
+def _row(actors, games, fresh, *, steps=2.5, horizon=None, q=0.2, wait=0.05,
+         starved=False):
     return {
         "actors": actors, "actor_games": games, "concurrent_games": actors * games,
         "fresh_per_step": fresh, "steps_per_s": steps, "traj_per_s": fresh * steps,
         "horizon_steps": horizon if horizon is not None else 4096 / fresh,
         "reuse": 64 * steps / (fresh * steps), "buffer_capacity": 4096,
         "q_occ_max": q, "gpu_busy_frac": 0.8, "data_wait_frac": wait,
+        "batch_starved": starved,
     }
 
 
@@ -144,6 +146,89 @@ def test_saturated_queue_is_not_recommended():
     rows = [_row(30, 1, 26.0, q=0.99), _row(16, 1, 14.0, q=0.3)]
     rec = recommend(rows, fresh_target=1.0)
     assert rec["async_actors"] == 16
+
+
+def test_batch_starved_rows_are_never_recommended():
+    """A window too short to fill the buffer past batch_trajectories makes
+    ReplayBuffer.sample() return short batches: cheaper steps, inflated steps/s,
+    deflated fresh/step. Such a row must not win, however good it looks."""
+    rows = [_row(8, 1, 20.0, steps=9.0, starved=True), _row(16, 1, 14.0)]
+    rec = recommend(rows, fresh_target=1.0)
+    assert rec["async_actors"] == 16
+
+
+def test_all_rows_starved_falls_back_without_crashing():
+    rows = [_row(8, 1, 20.0, starved=True)]
+    rec = recommend(rows, fresh_target=1.0)
+    assert rec["async_actors"] == 8  # reported, but via the not-viable path
+
+
+# -- actor weights ------------------------------------------------------------
+def test_resolve_weights_auto_picks_the_versions_latest_checkpoint(tmp_path):
+    import argparse
+
+    from deepnash_rbc.bench import resolve_weights
+
+    d = tmp_path / "v0.1.0"
+    d.mkdir()
+    for step in (10, 300, 20):
+        (d / f"deepnash_async_v0.1.0_{step}.pt").write_bytes(b"x")
+    args = argparse.Namespace(weights="auto", version="0.1.0", checkpoint_dir=str(tmp_path))
+    assert resolve_weights(args).endswith("_300.pt")
+
+
+def test_resolve_weights_none_and_explicit_path(tmp_path):
+    import argparse
+
+    from deepnash_rbc.bench import resolve_weights
+
+    ck = tmp_path / "some.pt"
+    ck.write_bytes(b"x")
+    none = argparse.Namespace(weights="none", version="0.1.0", checkpoint_dir=str(tmp_path))
+    assert resolve_weights(none) is None
+    explicit = argparse.Namespace(weights=str(ck), version=None, checkpoint_dir=str(tmp_path))
+    assert resolve_weights(explicit) == str(ck)
+
+
+def test_resolve_weights_rejects_a_missing_path(tmp_path):
+    import argparse
+
+    from deepnash_rbc.bench import resolve_weights
+
+    args = argparse.Namespace(weights=str(tmp_path / "nope.pt"), version=None,
+                              checkpoint_dir=str(tmp_path))
+    with pytest.raises(SystemExit, match="no such checkpoint"):
+        resolve_weights(args)
+
+
+def test_load_actor_weights_accepts_both_checkpoint_shapes(tmp_path):
+    """Training checkpoints wrap the net under 'net'; a bare state_dict works too."""
+    import torch
+
+    from deepnash_rbc.bench import load_actor_weights
+    from deepnash_rbc.network import make_net
+
+    cfg = Config()
+    cfg.encoding.history = 1
+    cfg.network.arch = "gru"
+    cfg.network.channels = 8
+    cfg.network.enc_blocks = 1
+    cfg.network.mixer_dim = 16
+    cfg.network.mixer_layers = 1
+    torch.manual_seed(0)
+    source = make_net(cfg.encoding, cfg.network)
+
+    wrapped = tmp_path / "wrapped.pt"
+    torch.save({"net": source.state_dict(), "step": 5}, wrapped)
+    bare = tmp_path / "bare.pt"
+    torch.save(source.state_dict(), bare)
+
+    for path in (wrapped, bare):
+        target = make_net(cfg.encoding, cfg.network)
+        load_actor_weights(target, str(path))
+        for a, b in zip(source.state_dict().values(), target.state_dict().values()):
+            assert torch.equal(a, b)
+    assert load_actor_weights(make_net(cfg.encoding, cfg.network), None) is None
 
 
 # -- --apply ------------------------------------------------------------------
