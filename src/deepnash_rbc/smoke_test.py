@@ -106,12 +106,16 @@ def check_stockfish() -> None:
     print(f"  Stockfish OK at {path} (e4 cpl={ev.cpl}, top1={ev.is_top1})")
 
 
-def check_async(arch: str, device: torch.device) -> None:
+def check_async(arch: str, device: torch.device, actor_games: int = 1) -> None:
     """Drive the real async actor/learner loop (run_async) for a few learner
     steps in a temp dir: spawns CPU actors, streams trajectories, broadcasts
     weights, runs the temporal learner branch, and checkpoints. Confirms the
     async path (the one training uses) wires up and its checkpoint reloads with
-    the right arch."""
+    the right arch.
+
+    ``actor_games > 1`` drives the multi-game actor instead: several games per
+    process behind one batched forward (see infer.py). Both are exercised
+    because they are different code paths inside the actor, not a tuning knob."""
     import glob
     import shutil
     import tempfile
@@ -127,6 +131,7 @@ def check_async(arch: str, device: torch.device) -> None:
         cfg.train.checkpoint_dir = tmp
         cfg.train.metrics_path = os.path.join(tmp, "metrics.jsonl")
         cfg.train.async_actors = 2
+        cfg.train.actor_games = actor_games
         cfg.train.min_buffer_to_train = 2
         cfg.train.buffer_capacity = 16
         cfg.train.batch_trajectories = 2
@@ -142,8 +147,8 @@ def check_async(arch: str, device: torch.device) -> None:
         from .play_session import load_net
         net2, _ = load_net(ckpts[0], device)
         assert bool(getattr(net2, "is_temporal", False)) == (arch != "resnet")
-        print(f"      async loop OK: {len(ckpts)} checkpoint(s), reload arch={arch} "
-              f"({type(net2).__name__})")
+        print(f"      async loop OK (actor_games={actor_games}): {len(ckpts)} "
+              f"checkpoint(s), reload arch={arch} ({type(net2).__name__})")
     finally:
         if prev_idle is None:
             os.environ.pop("DEEPNASH_IGNORE_IDLE", None)
@@ -190,7 +195,8 @@ def check_arch(arch: str, device: torch.device, do_async: bool = False) -> None:
 
     if do_async:
         print("  [e] async actor/learner loop")
-        check_async(arch, device)
+        check_async(arch, device, actor_games=1)  # one game per actor process
+        check_async(arch, device, actor_games=3)  # batched multi-game actor
 
 
 def main() -> None:

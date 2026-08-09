@@ -167,6 +167,23 @@ class TrainConfig:
     # In async mode, eval_every / checkpoint_every / total_iters count LEARNER
     # STEPS, not outer iterations.
     async_actors: int = 16  # persistent CPU self-play workers
+    # Concurrent self-play games per actor PROCESS. 1 (the default) is the
+    # original one-game-at-a-time actor, bit-for-bit. Above 1 the actor plays
+    # this many games on this many threads and funnels every network query
+    # through one batched forward (see infer.py): a self-play actor is ~85-90%
+    # batch-1 forward, and batch 8-16 costs 2.3-3.4x less per sample on CPU
+    # depending on arch. Total concurrent games is async_actors * actor_games,
+    # so this is the knob for filling a many-core box without one process per
+    # game. Bench it on the training box (deepnash-bench --actor-games) --
+    # the sweet spot depends on cores, arch and how fast the learner drains.
+    actor_games: int = 1
+    # Cap on requests per batched forward; 0 => actor_games (batch everything
+    # that is in flight). Lower it to trade throughput for fresher weights.
+    actor_max_batch: int = 0
+    # How long the batcher waits for a straggler game still in Python before
+    # running the forward without it. Only paid when a game is slow: the batcher
+    # fires immediately once every in-flight game is waiting on it.
+    actor_batch_wait_ms: float = 2.0
     traj_queue_size: int = 256  # actor->learner queue cap (backpressure)
     min_buffer_to_train: int = 64  # warmup: learner waits for this many trajectories
     drain_per_cycle: int = 64  # max trajectories pulled from queue per learner cycle

@@ -120,10 +120,17 @@ class _RecurrentMixer(nn.Module):
     """GRU/LSTM over the token sequence. Same weights drive the batched training
     ``sequence`` path and the one-step acting ``step`` path."""
 
+    # acting state is a fixed-size hidden vector, not a growing token prefix, so
+    # a step costs the same at move 1 and move 100 (see state_is_prefix below)
+    state_is_prefix = False
+
     def __init__(self, dim: int, layers: int, kind: str):
         super().__init__()
         rnn_cls = nn.GRU if kind == "gru" else nn.LSTM
         self.rnn = rnn_cls(dim, dim, num_layers=layers)  # [T, B, D]
+        self.is_lstm = kind == "lstm"
+        self.layers = layers
+        self.dim = dim
 
     def sequence(self, tok: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         # padded tail steps are causally after every real step -> their outputs
@@ -135,9 +142,60 @@ class _RecurrentMixer(nn.Module):
         out, new_state = self.rnn(tok.unsqueeze(0), state)  # [1,B,D]
         return out.squeeze(0), new_state
 
+    def step_batched(self, tok: torch.Tensor, states: list):
+        # states are per-game h (GRU) or (h, c) (LSTM), each [layers, 1, D];
+        # None at game start, which nn.RNN treats as zeros -- so we materialize
+        # the zeros explicitly and concatenate along the batch axis.
+        blank = tok.new_zeros(self.layers, 1, self.dim)
+        if self.is_lstm:
+            h = torch.cat([blank if s is None else s[0] for s in states], dim=1)
+            c = torch.cat([blank if s is None else s[1] for s in states], dim=1)
+            state = (h, c)
+        else:
+            state = torch.cat([blank if s is None else s for s in states], dim=1)
+        out, new = self.rnn(tok.unsqueeze(0), state)
+        if self.is_lstm:
+            new_states = [
+                (h.contiguous(), c.contiguous())
+                for h, c in zip(new[0].split(1, dim=1), new[1].split(1, dim=1))
+            ]
+        else:
+            new_states = [h.contiguous() for h in new.split(1, dim=1)]
+        return out.squeeze(0), new_states
+
+
+def _pad_token_buffers(tok: torch.Tensor, states: list):
+    """Right-pad per-game token buffers into one [Tmax, B, D] batch.
+
+    ``states`` are the growing per-game buffers ``[T_i, 1, D]`` (None before the
+    first step); ``tok`` is this step's token for each game. Every mixer that
+    consumes a buffer is causal, so position ``T_i`` (the row we read back) can
+    never see the zero padding that sits at positions ``> T_i``. That makes the
+    batched call mathematically identical to the per-game ``step`` calls, with
+    the ragged lengths handled by padding rather than by bucketing.
+
+    Returns ``(buf, lengths)`` where ``lengths[i]`` is the buffer length for
+    game ``i`` *including* this step's token.
+    """
+    lengths = [1 if s is None else s.shape[0] + 1 for s in states]
+    tmax = max(lengths)
+    b, d = tok.shape
+    buf = tok.new_zeros(tmax, b, d)
+    for i, s in enumerate(states):
+        if s is not None:
+            buf[: lengths[i] - 1, i] = s[:, 0]
+        buf[lengths[i] - 1, i] = tok[i]
+    return buf, lengths
+
 
 class _TransformerMixer(nn.Module):
     """Causal Transformer encoder over the token sequence."""
+
+    # acting state is the whole token prefix and a step re-runs it, so cost grows
+    # with the move number. Batching two games at very different move numbers
+    # therefore pays the longer one's cost twice; infer.py groups by length
+    # instead of padding them together.
+    state_is_prefix = True
 
     def __init__(self, dim: int, nhead: int, layers: int, max_seq: int):
         super().__init__()
@@ -184,6 +242,16 @@ class _TransformerMixer(nn.Module):
         x = buf + self.pos[:t].unsqueeze(1)
         out = self.enc(x, mask=self._causal_mask(t, buf.device))
         return out[-1], buf  # last position is the current step's context
+
+    def step_batched(self, tok: torch.Tensor, states: list):
+        buf, lengths = _pad_token_buffers(tok, states)
+        t = buf.shape[0]
+        assert t <= self.max_seq, f"sequence length {t} exceeds max_seq {self.max_seq}"
+        x = buf + self.pos[:t].unsqueeze(1)
+        out = self.enc(x, mask=self._causal_mask(t, buf.device))
+        ctx = torch.stack([out[n - 1, i] for i, n in enumerate(lengths)])
+        new_states = [buf[:n, i: i + 1].clone() for i, n in enumerate(lengths)]
+        return ctx, new_states
 
 
 # --- sLSTM vanilla-backend perf patch (bit-identical) -----------------------
@@ -325,6 +393,8 @@ class _XLSTMMixer(nn.Module):
     token sequence. Pure-PyTorch 'vanilla' backend + dropout=0 keep the forward
     deterministic and CPU-runnable (train==act, fast==legacy guarantees)."""
 
+    state_is_prefix = True  # step replays the prefix; see _TransformerMixer
+
     def __init__(self, dim, num_blocks, num_heads, max_seq, slstm_at, conv_kernel):
         super().__init__()
         self.max_seq = max_seq
@@ -349,6 +419,15 @@ class _XLSTMMixer(nn.Module):
         assert t <= self.max_seq, f"sequence length {t} exceeds max_seq {self.max_seq}"
         out = self.stack(buf.transpose(0, 1)).transpose(0, 1)
         return out[-1], buf
+
+    def step_batched(self, tok: torch.Tensor, states: list):
+        buf, lengths = _pad_token_buffers(tok, states)
+        t = buf.shape[0]
+        assert t <= self.max_seq, f"sequence length {t} exceeds max_seq {self.max_seq}"
+        out = self.stack(buf.transpose(0, 1)).transpose(0, 1)
+        ctx = torch.stack([out[n - 1, i] for i, n in enumerate(lengths)])
+        new_states = [buf[:n, i: i + 1].clone() for i, n in enumerate(lengths)]
+        return ctx, new_states
 
 
 class TemporalNet(nn.Module):
@@ -380,6 +459,9 @@ class TemporalNet(nn.Module):
             )
         else:
             self.mixer = _TransformerMixer(d, net.nhead, net.mixer_layers, net.max_seq)
+        # does a step's cost grow with the move number? batched acting needs to
+        # know, so it can group games by prefix length instead of padding them
+        self.state_is_prefix = self.mixer.state_is_prefix
 
         # FiLM: context -> per-channel (gamma, beta)
         self.film = nn.Linear(d, 2 * c)
@@ -444,6 +526,23 @@ class TemporalNet(nn.Module):
         fused = self._apply_film(spatial, ctx)  # [B, C, 8, 8]
         value, sense_logits, move_logits = self._heads(fused)
         return value, sense_logits, move_logits, new_state
+
+    def step_batched(self, frames: torch.Tensor, states: list):
+        """One acting step for B *independent* games at once.
+
+        ``step`` carries a single game's state, so an actor playing one game at a
+        time queries the net at batch 1 -- the worst shape for the conv encoder.
+        This variant takes one frame and one mixer state per game and returns a
+        state per game, letting an actor process interleave several games behind
+        a single batched forward (see ``infer.InferenceBatcher``). The mixers are
+        causal, so batching ragged game lengths by padding is exact, not an
+        approximation -- ``tests/test_step_batched.py`` pins that against ``step``.
+        """
+        spatial, tok = self._encode(frames)
+        ctx, new_states = self.mixer.step_batched(tok, states)  # [B, D]
+        fused = self._apply_film(spatial, ctx)  # [B, C, 8, 8]
+        value, sense_logits, move_logits = self._heads(fused)
+        return value, sense_logits, move_logits, new_states
 
 
 def make_net(enc: EncodingConfig, net: NetworkConfig) -> nn.Module:

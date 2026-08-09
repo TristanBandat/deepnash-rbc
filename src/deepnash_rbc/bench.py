@@ -35,12 +35,13 @@ import torch
 import torch.multiprocessing as mp
 
 from . import config as config_mod
-from .async_train import BatchPrefetcher, _drain_latest, _sd_to_numpy, actor_loop
+from .async_train import BatchPrefetcher, actor_loop
 from .config import Config
 from .network import make_net
 from .replay import ReplayBuffer
 from .rnad.trainer import RNaDLearner
 from .train import resolve_device
+from .weights import WeightBus
 
 
 def _now() -> float:
@@ -87,16 +88,16 @@ def measure_training(
     buffer = ReplayBuffer(cfg.train.buffer_capacity)
 
     traj_q = ctx.Queue(maxsize=cfg.train.traj_queue_size)
-    weight_qs = [ctx.Queue(maxsize=1) for _ in range(n_actors)]
     stop_event = ctx.Event()
     pause_event = ctx.Event()  # never set here; actor_loop requires it
 
-    init_sd = _sd_to_numpy(net)
+    bus = WeightBus.create(net, ctx)
+    bus.publish(net)
     procs: List[mp.Process] = []
     for i in range(n_actors):
         p = ctx.Process(
             target=actor_loop,
-            args=(i, init_sd, cfg, traj_q, weight_qs[i], stop_event, pause_event),
+            args=(i, bus, cfg, traj_q, stop_event, pause_event),
             daemon=True,
         )
         p.start()
@@ -182,13 +183,7 @@ def measure_training(
             t0 = _now()
             step_for_broadcast += 1
             if step_for_broadcast % cfg.train.weight_broadcast_every == 0:
-                sd = _sd_to_numpy(net)
-                for wq in weight_qs:
-                    _drain_latest(wq)
-                    try:
-                        wq.put_nowait(sd)
-                    except queue.Full:
-                        pass
+                bus.publish(net)
             broadcast = _now() - t0
 
             if measuring:
@@ -209,11 +204,10 @@ def measure_training(
         stop_event.set()
         for p in procs:
             p.terminate()
-        for q in [traj_q, *weight_qs]:
-            try:
-                q.cancel_join_thread()
-            except Exception:
-                pass
+        try:
+            traj_q.cancel_join_thread()
+        except Exception:
+            pass
         for p in procs:
             p.join(timeout=3)
 
@@ -223,6 +217,8 @@ def measure_training(
     variant = (cfg.rnad.fast_learner if fast is None else fast)
     return {
         "actors": n_actors,
+        "actor_games": max(1, cfg.train.actor_games),
+        "concurrent_games": n_actors * max(1, cfg.train.actor_games),
         "learner": "fast" if variant else "legacy",
         "prefetch_depth": cfg.train.prefetch_depth,
         "device": str(device),
@@ -340,11 +336,12 @@ def run_compare(cfg: Config, counts: List[int], warmup_s: float, measure_s: floa
 
 
 def run_bench(cfg: Config, counts: List[int], warmup_s: float, measure_s: float,
-              fresh_target: float) -> Dict:
+              fresh_target: float, games_counts: Optional[List[int]] = None) -> Dict:
     cores = os.cpu_count() or 0
     device = resolve_device(cfg.train.device)
+    games_counts = games_counts or [max(1, cfg.train.actor_games)]
     print(f"[bench] cores={cores} learner_device={device} counts={counts} "
-          f"warmup={warmup_s}s measure={measure_s}s")
+          f"actor_games={games_counts} warmup={warmup_s}s measure={measure_s}s")
     if device.type != "cuda":
         print("[bench] WARNING: no CUDA device -> learner runs on CPU; absolute GPU "
               "timings will not reflect the L40S. Run this on the GPU server.")
@@ -353,18 +350,29 @@ def run_bench(cfg: Config, counts: List[int], warmup_s: float, measure_s: float,
               "as a saturated queue / no extra freshness).")
 
     rows: List[Dict[str, float]] = []
-    for c in counts:
-        print(f"[bench] running real training loop with {c} actors ...", flush=True)
-        row = measure_training(cfg, c, warmup_s, measure_s)
-        rows.append(row)
-        print(f"        steps/s={row['steps_per_s']}  gpu_step={row['gpu_step_ms']}ms "
-              f"({row['gpu_busy_frac']*100:.0f}% busy, {row['data_wait_frac']*100:.0f}% waiting on data)  "
-              f"host={row['host_ms']}ms/step  fresh/step={row['fresh_per_step']}  "
-              f"queue avg/max={row['q_occ_avg']*100:.0f}/{row['q_occ_max']*100:.0f}%")
-        if row["learner_steps"] == 0:
-            print("        !! no learner steps in the window; raise --measure or --warmup")
+    for games in games_counts:
+        cfg.train.actor_games = games
+        for c in counts:
+            print(f"[bench] running real training loop with {c} actors "
+                  f"x {games} games ...", flush=True)
+            row = measure_training(cfg, c, warmup_s, measure_s)
+            rows.append(row)
+            print(f"        steps/s={row['steps_per_s']}  gpu_step={row['gpu_step_ms']}ms "
+                  f"({row['gpu_busy_frac']*100:.0f}% busy, {row['data_wait_frac']*100:.0f}% waiting on data)  "
+                  f"host={row['host_ms']}ms/step  traj/s={row['traj_per_s']}  "
+                  f"fresh/step={row['fresh_per_step']}  "
+                  f"queue avg/max={row['q_occ_avg']*100:.0f}/{row['q_occ_max']*100:.0f}%")
+            if row["learner_steps"] == 0:
+                print("        !! no learner steps in the window; raise --measure or --warmup")
 
-    rec = recommend(rows, fresh_target)
+    # the actor-count recommendation is only meaningful within one actor_games
+    # setting; pick the configuration with the best trajectory throughput first.
+    best_games = max(
+        games_counts,
+        key=lambda g: max(r["traj_per_s"] for r in rows if r["actor_games"] == g),
+    )
+    rec = recommend([r for r in rows if r["actor_games"] == best_games], fresh_target)
+    rec["actor_games"] = best_games
     return {"cores": cores, "device": str(device), "rows": rows, "recommendation": rec}
 
 
@@ -408,6 +416,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fresh-per-step", type=float, default=1.0,
                    help="Target fresh trajectories added to the buffer per GPU step; the pick is the "
                         "smallest actor count meeting it (default: 1.0).")
+    p.add_argument("--actor-games", default=None,
+                   help="Comma-separated concurrent-games-per-actor values to sweep "
+                        "(TrainConfig.actor_games; default: just the config value). "
+                        "Total concurrent games is actors x games, so e.g. "
+                        "--counts 16,30 --actor-games 1,4,8 explores the whole grid.")
     p.add_argument("--device", default=None, help="Learner device override (cuda/cpu).")
     p.add_argument("--json", default=None, help="Write the full report to this path.")
     p.add_argument("--apply", action="store_true",
@@ -437,13 +450,19 @@ def main(argv: Optional[List[str]] = None) -> None:
             print(f"[bench] wrote {args.json}")
         return
 
-    report = run_bench(cfg, counts, args.warmup, args.measure, args.fresh_per_step)
+    games_counts = (
+        sorted({int(x) for x in args.actor_games.split(",") if x.strip()})
+        if args.actor_games else None
+    )
+    report = run_bench(cfg, counts, args.warmup, args.measure, args.fresh_per_step,
+                       games_counts)
 
     rec = report["recommendation"]
     print("\n=== recommendation ===")
-    print(f"  async_actors = {rec['async_actors']}")
+    print(f"  async_actors = {rec['async_actors']}   actor_games = {rec['actor_games']}")
     print(f"  why: {rec['reason']}")
-    print(f"  run: uv run deepnash-train-async --async-actors {rec['async_actors']}")
+    print(f"  run: uv run deepnash-train-async --async-actors {rec['async_actors']} "
+          f"--actor-games {rec['actor_games']}")
 
     if args.apply:
         old = Config().train.async_actors
