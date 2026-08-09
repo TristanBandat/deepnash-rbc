@@ -203,3 +203,34 @@ class Config:
     network: NetworkConfig = field(default_factory=NetworkConfig)
     rnad: RNaDConfig = field(default_factory=RNaDConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
+
+
+def config_from_dict(data: dict) -> Config:
+    """Rebuild a :class:`Config` from a saved ``v<version>/config.json`` manifest.
+
+    Overlays the manifest onto current defaults rather than requiring an exact
+    match, so a manifest pinned before a field existed still loads (that field
+    keeps its default -- see ``checkpoints.ensure_version_config``). JSON has no
+    tuples, so list values are restored to tuples where the default is one.
+
+    This is what lets ``deepnash-bench`` measure the model a run *actually* uses
+    instead of the library defaults; benchmarking the wrong architecture gives
+    numbers that say nothing about the run you care about.
+    """
+    from dataclasses import fields, is_dataclass
+
+    cfg = Config()
+    for section_field in fields(cfg):
+        section = getattr(cfg, section_field.name)
+        saved = data.get(section_field.name)
+        if not isinstance(saved, dict) or not is_dataclass(section):
+            continue
+        known = {f.name: f for f in fields(section)}
+        for key, value in saved.items():
+            if key not in known:
+                continue  # manifest from a newer/older schema; ignore extras
+            current = getattr(section, key)
+            if isinstance(current, tuple) and isinstance(value, list):
+                value = tuple(value)
+            setattr(section, key, value)
+    return cfg
