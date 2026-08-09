@@ -28,12 +28,13 @@
     "rnad.neurd_clip": 2.5,
     "rnad.rho_clip": 1.0,
     "rnad.value_coef": 1.0,
-    "train.async_actors": 16,
+    "train.actor_games": 4,
+    "train.async_actors": 56,
     "train.batch_trajectories": 64,
     "train.buffer_capacity": 4096,
     "train.checkpoint_every": 10000,
     "train.device": "cuda",
-    "train.drain_per_cycle": 64,
+    "train.drain_per_cycle": 256,
     "train.eval_every": 0,
     "train.eval_games": 50,
     "train.eval_opponents": [
@@ -60,30 +61,46 @@
     ],
     "train.train_start_hour": 17,
     "train.train_stop_hour": 7,
-    "train.traj_queue_size": 256,
+    "train.traj_queue_size": 2048,
     "train.weight_broadcast_every": 20
   },
   "runs": [
     {
-      "_comment": "ARM 1 -- isolates the LR SCHEDULE. Identical to v0.57.0 (batch 64, lr 1.4142e-4) except lr_schedule cosine -> constant and lr_warmup 4000 -> 0, i.e. exactly v0.42.0's flat-lr treatment at the new batch. Read against v0.57.0's curve (572 @30k iters): if this arm recovers toward ~750, the warmup+decay schedule caused the regression and the final run should train at a flat lr. If it stays near 600, the schedule is exonerated and batch 64 itself (or its interaction with the sqrt(2) lr) is the culprit -- which arm 2 then resolves. Runs first because it is the single most likely explanation: v0.42.0, the best transformer on the ladder, is the only transformer that never used a decaying schedule.",
-      "name": "tf-b64-const-lr1.4e-4",
-      "bump": "minor",
-      "overrides": {}
+      "_comment": "ARM 0 -- tonight's run: CONTINUE v0.60.0 (arm 1's recipe, already at 30k) to 90k rather than starting arm 1 fresh. WHY: at the measured 8,853 steps/h a fresh 90k run needs 10.2h and cannot clear the Mon 07:00 idle boundary from a ~23:30 start, whereas the +60k continuation needs 6.8h and lands ~06:20. v0.60.0 is lr_schedule=constant, so raising total_iters does NOT distort the schedule (on the cosine runs it would have rewritten the whole lr curve mid-run). Checkpoints land every 10k, so even an overrun leaves 40k-80k evaluatable, and the idle window pauses training at 07:00 by itself. ACTOR SETTINGS RESTATED INLINE: a resume replays the version's pinned config.json as its base and does NOT inherit 'defaults', so async_actors/actor_games/queue caps must be repeated here or this run would silently use v0.60.0's pinned 16x1 with a 256-deep queue. NOTE v0.60.0's config.json predates actor_games and has no such key; the override supplies it. RISK, ACCEPTED KNOWINGLY: 56 processes x 4 games draws ~62-78 cores on a 60-vCore VM, so the box is oversubscribed and the learner's own threads (main loop, prefetch/collate, drain) compete with actors; if steps/h falls more than ~10% the 90k target slips past 07:00. 30x4 (~33-42 cores) is the version that fits with headroom. drain_per_cycle=256 is required for any of this to matter: fresh_per_step can never exceed drain_per_cycle, so at the old 64 the learner could absorb at most 157 traj/s and ~85% of 56x4's production would be dropped on queue.Full. At 256 the ceiling is 630 traj/s and the floor on the off-policy horizon drops from 64 to 16 learner steps.",
+      "name": "tf-v0.60-to-90k-56x4",
+      "resume": "v0.60.0",
+      "overrides": {
+        "train.total_iters": 90000,
+        "train.async_actors": 48,
+        "train.actor_games": 4,
+        "train.drain_per_cycle": 256,
+        "train.traj_queue_size": 2048
+      }
     },
     {
       "_comment": "ARM 2 -- isolates BATCH SIZE, and with arm 1, the sqrt(2) lr rule. Constant lr held at v0.42.0's ORIGINAL 1e-4 (NOT sqrt(2)-scaled) at batch 64, so against v0.42.0 (batch 32, constant 1e-4, same architecture, same eta, 759 @60k batch-32-equivalent steps) the ONLY difference is the batch. Against arm 1 (same batch, same flat schedule, lr 1.4142e-4) the only difference is the sqrt(2) lr scaling. Together the two arms decompose the full v0.42->v0.57 regression into schedule / batch / lr without a third training run. NOTE the lr is deliberately un-scaled here: that is the point of the arm, not an oversight.",
       "name": "tf-b64-const-lr1e-4",
       "bump": "minor",
       "overrides": {
-        "rnad.lr": 0.0001
+        "rnad.lr": 0.0001,
+        "train.total_iters": 90000,
+        "train.async_actors": 48,
+        "train.actor_games": 4,
+        "train.drain_per_cycle": 256,
+        "train.traj_queue_size": 2048
       }
     },
     {
-      "_comment": "ARM 3 -- measures the RUN-TO-RUN NOISE FLOOR of arm 1's recipe: identical to arm 1 in every respect except train.seed 0 -> 1. Replaces an async_actors 16->32 arm that was dropped as invalid: the actors are already single-threaded (async_train.py:108) and the project's own benchmark finds 16 workers fastest on the 60-vCore VM, so more actors do not raise trajectory throughput. That also means sample reuse is NOT independently configurable -- fresh-per-step is pinned near 21 by the actors, so reuse = batch_trajectories / 21 and batch size IS the reuse knob, already covered by arm 2 vs v0.42.0. WHY THIS INSTEAD: every conclusion this sweep can reach is a comparison of single runs, and the transformer noise floor is unmeasured -- v0.56.0 and v0.57.0 differ only in decay onset yet sit 33 Elo apart at 80k xstep, and the whole thesis claim currently rests on v0.42.0 at n=1 against a best-of-26-seeds CNN. This arm is informative either way: if arm 1 recovers, it gives n=2 on the recipe the final run will use; if arm 1 does not recover, it shows the failure is reproducible rather than a seed fluke. Runs last: it is the arm whose loss to a Monday-morning overrun costs the least.",
+      "_comment": "ARM 3 -- measures the RUN-TO-RUN NOISE FLOOR of arm 1's recipe: identical to arm 1 in every respect except train.seed 0 -> 1. SUPERSEDED PREMISE (corrected 2026-08-09): this arm previously replaced an async_actors 16->32 arm on the grounds that actors are single-threaded and 16 was the benchmarked optimum, so fresh-per-step was pinned near 21 and reuse was NOT independently configurable. Both halves of that are now false. Actor throughput measured 1.78x at 2 games/process and 2.06x at 4 (paired A/B, resnet; see infer.py), and raw actor scaling keeps rising past 16 processes (16->32 gave +47% on a 16-core box). More importantly TrainConfig.actor_games interleaves several games per process behind one batched forward, so fresh-per-step -- and therefore reuse and the off-policy horizon -- IS now a knob independent of batch_trajectories. The old '16 workers is the benchmarked optimum' figure also came from a bench that measured the library defaults with random-init weights; both defects are fixed. This arm still measures the seed noise floor, which is unaffected. WHY THIS INSTEAD: every conclusion this sweep can reach is a comparison of single runs, and the transformer noise floor is unmeasured -- v0.56.0 and v0.57.0 differ only in decay onset yet sit 33 Elo apart at 80k xstep, and the whole thesis claim currently rests on v0.42.0 at n=1 against a best-of-26-seeds CNN. This arm is informative either way: if arm 1 recovers, it gives n=2 on the recipe the final run will use; if arm 1 does not recover, it shows the failure is reproducible rather than a seed fluke. Runs last: it is the arm whose loss to a Monday-morning overrun costs the least.",
       "name": "tf-b64-const-lr1.4e-4-s1",
       "bump": "minor",
       "overrides": {
-        "train.seed": 1
+        "train.seed": 1,
+        "train.total_iters": 90000,
+        "train.async_actors": 48,
+        "train.actor_games": 4,
+        "train.drain_per_cycle": 256,
+        "train.traj_queue_size": 2048
       }
     },
     {
@@ -92,8 +109,6 @@
       "resume": "v0.41.0",
       "overrides": {
         "train.total_iters": 500000,
-        "train.train_start_hour": 17,
-        "train.train_stop_hour": 7,
         "rnad.lr_schedule": "cosine",
         "rnad.lr_warmup": 0,
         "rnad.lr_min": 1e-05
