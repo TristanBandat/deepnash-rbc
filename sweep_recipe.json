@@ -1,0 +1,103 @@
+{
+  "_comment": "RECIPE-RECOVERY sweep for the transformer, run with: uv run python scripts/train_campaign.py --sweep sweep_recipe.json [--dry-run]. WHY: measured on the full ladder 2026-08-09 at matched batch-32-equivalent steps (xstep), the batch-64 branch is ~115 Elo BELOW the batch-32 constant-lr transformer at the SAME architecture -- v0.42.0 (d128/l2, batch 32, constant lr 1e-4) = 788 @80k xstep, v0.57.0 (batch 64, lr 1.4142e-4 cosine, same body) = 673. SIZE IS NOT THE CONSTRAINT: three rungs on the batch-64 cosine recipe -- v0.57.0 1.67M = 673, v0.58.0 4.49M = 594, v0.59.0 12.03M = 624 @80k xstep -- show no trend across a 7.2x parameter range, so the earlier size ladder (sweep_scale.json) is spent and the d256/d384 arms are DROPPED from this sweep. THE OVERLOOKED KNOB -- SAMPLE REUSE: async actors are CPU workers (async_train.py:109) that produce trajectories unsynchronised with the learner, ~13-24 per learner step regardless of batch. Reuse = batch_trajectories / fresh-per-step is therefore 1.5x at batch 32 (v0.42.0 20.5 fresh/step) but 3.0-5.0x at batch 64 (v0.57.0 21.6, v0.56.0 15.8, v0.59.0 12.9). The 32->64 conversion silently HALVED the fresh self-play data behind each learner sample: 2.6M unique games in 120k steps vs v0.42.0's 4.9M in 240k. It also confounds the size ladder -- a bigger net makes the CPU actors slower, so v0.59.0's 12M model got the stalest data of all (4.95x reuse). NOTE the reuse knob is NOT separately adjustable: actors are single-threaded already and 16 workers is the benchmarked optimum on the 60-vCore VM, so fresh-per-step is fixed near 21 and reuse = batch_trajectories / 21. Batch size therefore IS the reuse knob, and arm 2 vs v0.42.0 tests batch and reuse as the one bundle they are. SO: the three arms below vary lr schedule, lr scaling + batch/reuse, and seed -- holding architecture fixed at the 1.67M body throughout. HORIZON: 30k iters = 60k xstep, where the reference curves are already 151 Elo apart (v0.42.0 761, v0.57.0 610), far beyond the ~6 Elo standard error of a full-field ladder entry. BUDGET (start Sun 2026-08-09 ~18:45, must clear the Mon 07:00 idle boundary): 3.1h per arm at the measured 9,760 steps/h for this body = ~9.3h, finishing ~04:00 Mon. Arm order is by expected information: schedule, then batch/lr, then the seed replicate. NO 'tournament' SECTION ON PURPOSE: that disables the per-run gauntlet and keep_top pruning, saving ~45-60 min and keeping every checkpoint. Enter the arms on the ladder afterwards with: uv run python tools/tournament.py --worker 6 --model v0.62.0 (adjust versions; the campaign auto-bumps from whatever exists on the training box). max_seq raised 512 -> 1024: the positional table is a NON-PERSISTENT sinusoidal buffer (network.py:156), not a learned parameter, so this changes no weights, no parameter count and no attention cost (attention scales with actual T), and for any game under 512 frames the computed function is bit-identical to v0.42.0/v0.57.0. It only removes the hard assert at network.py:174/183 that killed a game in today's tournament ('sequence length 513 exceeds max_seq 512') and could kill a run overnight. A fourth run, the GRU v0.41.0 240k->500k extension, is carried over from sweep_scale.json and appended LAST; it is wanted independently and lands Tuesday, after the transformer decision is already in hand.",
+  "defaults": {
+    "encoding.history": 1,
+    "network.arch": "transformer",
+    "network.blocks": 6,
+    "network.channels": 128,
+    "network.enc_blocks": 4,
+    "network.max_seq": 1024,
+    "network.mixer_dim": 128,
+    "network.mixer_layers": 2,
+    "network.nhead": 4,
+    "network.value_hidden": 128,
+    "rnad.amp": true,
+    "rnad.c_clip": 1.0,
+    "rnad.compile_net": false,
+    "rnad.eta": 0.5,
+    "rnad.fast_learner": true,
+    "rnad.full_action_neurd": true,
+    "rnad.gamma": 1.0,
+    "rnad.grad_clip": 10.0,
+    "rnad.iteration_steps": 1000,
+    "rnad.lr": 0.00014142,
+    "rnad.lr_decay_start": 0,
+    "rnad.lr_min": 1e-05,
+    "rnad.lr_schedule": "constant",
+    "rnad.lr_warmup": 0,
+    "rnad.neurd_clip": 2.5,
+    "rnad.rho_clip": 1.0,
+    "rnad.value_coef": 1.0,
+    "train.async_actors": 16,
+    "train.batch_trajectories": 64,
+    "train.buffer_capacity": 4096,
+    "train.checkpoint_every": 10000,
+    "train.device": "cuda",
+    "train.drain_per_cycle": 64,
+    "train.eval_every": 0,
+    "train.eval_games": 50,
+    "train.eval_opponents": [
+      "random",
+      "attacker",
+      "trout"
+    ],
+    "train.games_per_iter": 8,
+    "train.idle_schedule": true,
+    "train.learner_steps_per_iter": 4,
+    "train.min_buffer_to_train": 64,
+    "train.num_actors": 1,
+    "train.prefetch_depth": 2,
+    "train.progress": true,
+    "train.seconds_per_player": 900.0,
+    "train.seed": 0,
+    "train.total_iters": 30000,
+    "train.train_days": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "train.train_start_hour": 17,
+    "train.train_stop_hour": 7,
+    "train.traj_queue_size": 256,
+    "train.weight_broadcast_every": 20
+  },
+  "runs": [
+    {
+      "_comment": "ARM 1 -- isolates the LR SCHEDULE. Identical to v0.57.0 (batch 64, lr 1.4142e-4) except lr_schedule cosine -> constant and lr_warmup 4000 -> 0, i.e. exactly v0.42.0's flat-lr treatment at the new batch. Read against v0.57.0's curve (572 @30k iters): if this arm recovers toward ~750, the warmup+decay schedule caused the regression and the final run should train at a flat lr. If it stays near 600, the schedule is exonerated and batch 64 itself (or its interaction with the sqrt(2) lr) is the culprit -- which arm 2 then resolves. Runs first because it is the single most likely explanation: v0.42.0, the best transformer on the ladder, is the only transformer that never used a decaying schedule.",
+      "name": "tf-b64-const-lr1.4e-4",
+      "bump": "minor",
+      "overrides": {}
+    },
+    {
+      "_comment": "ARM 2 -- isolates BATCH SIZE, and with arm 1, the sqrt(2) lr rule. Constant lr held at v0.42.0's ORIGINAL 1e-4 (NOT sqrt(2)-scaled) at batch 64, so against v0.42.0 (batch 32, constant 1e-4, same architecture, same eta, 759 @60k batch-32-equivalent steps) the ONLY difference is the batch. Against arm 1 (same batch, same flat schedule, lr 1.4142e-4) the only difference is the sqrt(2) lr scaling. Together the two arms decompose the full v0.42->v0.57 regression into schedule / batch / lr without a third training run. NOTE the lr is deliberately un-scaled here: that is the point of the arm, not an oversight.",
+      "name": "tf-b64-const-lr1e-4",
+      "bump": "minor",
+      "overrides": {
+        "rnad.lr": 0.0001
+      }
+    },
+    {
+      "_comment": "ARM 3 -- measures the RUN-TO-RUN NOISE FLOOR of arm 1's recipe: identical to arm 1 in every respect except train.seed 0 -> 1. Replaces an async_actors 16->32 arm that was dropped as invalid: the actors are already single-threaded (async_train.py:108) and the project's own benchmark finds 16 workers fastest on the 60-vCore VM, so more actors do not raise trajectory throughput. That also means sample reuse is NOT independently configurable -- fresh-per-step is pinned near 21 by the actors, so reuse = batch_trajectories / 21 and batch size IS the reuse knob, already covered by arm 2 vs v0.42.0. WHY THIS INSTEAD: every conclusion this sweep can reach is a comparison of single runs, and the transformer noise floor is unmeasured -- v0.56.0 and v0.57.0 differ only in decay onset yet sit 33 Elo apart at 80k xstep, and the whole thesis claim currently rests on v0.42.0 at n=1 against a best-of-26-seeds CNN. This arm is informative either way: if arm 1 recovers, it gives n=2 on the recipe the final run will use; if arm 1 does not recover, it shows the failure is reproducible rather than a seed fluke. Runs last: it is the arm whose loss to a Monday-morning overrun costs the least.",
+      "name": "tf-b64-const-lr1.4e-4-s1",
+      "bump": "minor",
+      "overrides": {
+        "train.seed": 1
+      }
+    },
+    {
+      "_comment": "Carried over verbatim from sweep_scale.json (needed regardless of how the recipe arms land) and placed LAST so it cannot delay the transformer decision. Long-horizon extension of the GRU v0.41.0 (lr 1e-4, eta 0.5, batch 32) from 240k to 500k. Rationale: v0.41.0 was still IMPROVING when its previous horizon ran out -- Elo 666 @190k -> 691 @210k -> 693 @220k -> 695 @240k -- so 240k was a schedule limit, not a plateau. lr SCHEDULE: a resume replays v0.41.0's PINNED config.json as its base, and that file still records the original 80k run (lr 1e-4, no lr_schedule key at all -> 'constant', idle window 19-6) -- the wsd schedule and 17-7 window of the 80k->240k extension live only in that extension's sweep entry, NOT on disk. So both must be restated here or this run would silently train at a flat 1e-4 on a 2h-shorter night. VERIFIED 2026-08-09: checkpoints/v0.41.0/config.json has no lr_schedule/lr_warmup/lr_min keys and records window 19-6, so the restatement below is load-bearing. Restated as cosine over the FULL 0->500k horizon instead of continuing the old wsd: the previous segment annealed all the way down to lr_min=1e-5 by 240k, and 260k further steps at 1e-5 would buy almost nothing. Because lr_at_step derives lr from the absolute step, cosine(0->500k) resumes at ~5.8e-5 -- a mild warm restart, still well under the 1e-4 peak -- then anneals smoothly back to 1e-5 at 500k. Note this restart is a genuine lr discontinuity (1e-5 -> 5.8e-5 at the resume step); it is the intended cost of extending an already-annealed run, and the alternative (wsd holding a flat 1e-4 until 340k) restarts 10x harder. Note this run does NOT inherit 'defaults' (resumes never do), so the batch=64 / constant-lr / 30k-iter settings of the recipe arms cannot leak into it. TIMING: 260k steps at v0.41.0's measured 200 ms/step is ~14.4h of learner time (~17h with the overhead the batch-64 runs showed), and it starts after the recipe arms, so it spans the Monday idle window and lands Tuesday morning at the earliest.",
+      "name": "gru-v0.41-to-500k-cosine",
+      "resume": "v0.41.0",
+      "overrides": {
+        "train.total_iters": 500000,
+        "train.train_start_hour": 17,
+        "train.train_stop_hour": 7,
+        "rnad.lr_schedule": "cosine",
+        "rnad.lr_warmup": 0,
+        "rnad.lr_min": 1e-05
+      }
+    }
+  ]
+}
