@@ -194,7 +194,8 @@ def _():
     #     H<h>     observation history     (CNN baseline 16; sequence nets are 1)
     #     c<c>     conv channels           (baseline 128)
     #     b<n>     residual blocks         (baseline 6)
-    #     lr1e-4   peak learning rate      (baseline 5e-5)
+    #     lr<v>    peak learning rate, 2 s.f. (baseline 5e-5; e.g. lr1e-4,
+    #              lr2.5e-5, lr1.4e-4)
     #     B<n>     learner batch trajectories (baseline 32)
     #     greedy   argmax self-play        (baseline = sampled)
     #     L<n>     mixer layers   (sequence only, baseline 2)
@@ -221,6 +222,13 @@ def _():
         )
         fam = FAMILY.get(net.get("arch"), net.get("arch") or "CNN")
         num = lambda x: f"{x:g}"
+
+        def lr_tag(lr: float) -> str:
+            # Compact scientific form: 1e-4 -> "lr1e-4", 2.5e-5 -> "lr2.5e-5",
+            # 1.4142e-4 (the sqrt(2)-scaled batch-64 lr) -> "lr1.4e-4".
+            mant, exp = f"{lr:.1e}".split("e")
+            return f"lr{mant.rstrip('0').rstrip('.')}e{int(exp)}"
+
         tags = []
         if rnad.get("eta") != 0.2:
             tags.append(f"η{num(rnad.get('eta'))}")
@@ -231,7 +239,7 @@ def _():
         if net.get("blocks") != 6:
             tags.append(f"b{net.get('blocks')}")
         if rnad.get("lr") != 5e-5:
-            tags.append("lr1e-4")
+            tags.append(lr_tag(rnad.get("lr")))
         # Batch is normalised out of the x-axis (see BATCH_REF), but it still is a
         # config deviation, so surface it in the name.
         if train.get("batch_trajectories", 32) != 32:
