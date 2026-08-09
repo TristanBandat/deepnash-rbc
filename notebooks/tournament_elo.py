@@ -55,7 +55,7 @@ Run:  uv run --group notebooks marimo edit notebooks/tournament_elo.py
 
 import marimo
 
-__generated_with = "0.23.11"
+__generated_with = "0.23.16"
 app = marimo.App(width="medium")
 
 
@@ -198,7 +198,10 @@ def _():
     #              lr2.5e-5, lr1.4e-4)
     #     B<n>     learner batch trajectories (baseline 32)
     #     greedy   argmax self-play        (baseline = sampled)
+    #     d<n>     mixer width    (sequence only, baseline 128)
     #     L<n>     mixer layers   (sequence only, baseline 2)
+    #     h<n>     attention heads (transformer/xlstm only, baseline 4; the
+    #              gru/lstm mixers ignore nhead, so it is never tagged there)
     #     e<n>     encoder blocks (sequence only, baseline 4)
     #
     # Genuine re-runs that share an identical config+seed get the bare version
@@ -247,8 +250,15 @@ def _():
         if train.get("selfplay_sample", True) is False:
             tags.append("greedy")
         if fam != "CNN":
+            if net.get("mixer_dim") not in (128, None):
+                tags.append(f"d{net.get('mixer_dim')}")
             if net.get("mixer_layers") not in (2, None):
                 tags.append(f"L{net.get('mixer_layers')}")
+            # nhead reaches only the attention mixers; _RecurrentMixer(dim, layers,
+            # kind) never sees it, so tagging gru/lstm with it would be fiction.
+            if net.get("arch") in ("transformer", "xlstm") and \
+                    net.get("nhead") not in (4, None):
+                tags.append(f"h{net.get('nhead')}")
             if net.get("enc_blocks") not in (4, None):
                 tags.append(f"e{net.get('enc_blocks')}")
         return fam + ("·" + "·".join(tags) if tags else "")
@@ -816,7 +826,16 @@ def _(align_dd, cutoff_slider, nets, pl, ver_ms):
 
 
 @app.cell
-def _(XLABEL, aligned_sub, band_toggle, mo, plot_group, plt, ref_toggle, ver_ms):
+def _(
+    XLABEL,
+    aligned_sub,
+    band_toggle,
+    mo,
+    plot_group,
+    plt,
+    ref_toggle,
+    ver_ms,
+):
     _sel = list(ver_ms.value)
     _sub = aligned_sub
     if _sub.height == 0:
