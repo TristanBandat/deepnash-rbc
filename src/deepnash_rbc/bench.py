@@ -429,7 +429,20 @@ def recommend(rows: List[Dict[str, float]], fresh_target: float,
             "horizon_steps": knee["horizon_steps"],
             "reuse": knee["reuse"],
         }
-    if horizon_target is not None:
+    # Diagnose *why* nothing was viable before blaming the horizon: a pegged queue
+    # means traj_per_s measured the learner's drain rate, not actor production, so
+    # every derived number is a floor and the configs are not comparable at all.
+    saturated = [r for r in rows if r.get("q_occ_avg", 0.0) >= 0.95]
+    if len(saturated) == len(rows):
+        reason = (
+            f"UNUSABLE: the trajectory queue was saturated (avg occupancy >=95%) in all "
+            f"{len(rows)} configs, so actors were dropping games and traj/s measured the "
+            f"learner's drain rate, not actor production -- the configs are not comparable "
+            f"and every horizon/reuse figure is a floor. Raise train.traj_queue_size and "
+            f"train.drain_per_cycle, and lengthen --warmup/--measure so the loop reaches "
+            f"steady state, before reading anything off this grid."
+        )
+    elif horizon_target is not None:
         suggested = int(best_horizon["buffer_capacity"] * horizon_target
                         / max(best_horizon["horizon_steps"], 1e-9))
         reason = (
@@ -564,6 +577,13 @@ def print_grid(rows: List[Dict[str, float]], cores: int) -> None:
               f"{r['gpu_busy_frac']*100:>4.0f}% {r['data_wait_frac']*100:>5.0f}% "
               f"{r['q_occ_max']*100:>6.0f}% {r.get('buffer_avg', 0):>7.0f}  {verdict}")
 
+    pegged = sum(1 for r in rows if r.get("q_occ_avg", 0.0) >= 0.95)
+    if pegged:
+        print(f"\n[bench] WARNING: {pegged}/{len(rows)} rows ran with the actor->learner "
+              f"queue saturated (avg occupancy >=95%). There, actors drop games on "
+              f"queue.Full and traj/s reflects the learner's DRAIN rate, not actor "
+              f"production -- those rows cannot be compared against each other. Raise "
+              f"train.traj_queue_size / train.drain_per_cycle and lengthen the window.")
     if starved:
         print(f"\n[bench] WARNING: {starved}/{len(rows)} rows ran with the buffer below "
               f"batch_trajectories. ReplayBuffer.sample() returns short batches there, so "
