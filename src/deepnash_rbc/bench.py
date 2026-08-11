@@ -143,7 +143,8 @@ def measure_training(
 
     prefetcher = (
         BatchPrefetcher(learner, buffer, cfg.train.batch_trajectories,
-                        cfg.train.min_buffer_to_train, cfg.train.prefetch_depth)
+                        cfg.train.min_buffer_to_train, cfg.train.prefetch_depth,
+                        cfg.train.length_bucket_pool)
         if cfg.train.prefetch_depth > 0 else None
     )
 
@@ -209,7 +210,10 @@ def measure_training(
                 fetch_wait = _now() - t0
                 sample_host = 0.0
             else:
-                col = learner.collate(buffer.sample(cfg.train.batch_trajectories))
+                col = learner.collate(
+                    buffer.sample(cfg.train.batch_trajectories,
+                                  cfg.train.length_bucket_pool)
+                )
                 fetch_wait = 0.0
                 sample_host = _now() - t0
             _sync(device)              # flush any prior work so we time only this step

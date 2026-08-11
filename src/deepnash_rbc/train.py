@@ -96,7 +96,8 @@ def main(cfg: Config | None = None) -> None:
 
         last = {}
         for _ in range(cfg.train.learner_steps_per_iter):
-            batch = buffer.sample(cfg.train.batch_trajectories)
+            batch = buffer.sample(cfg.train.batch_trajectories,
+                                  cfg.train.length_bucket_pool)
             if batch:
                 last = learner.update(batch)
 

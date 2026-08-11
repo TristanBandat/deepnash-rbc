@@ -110,6 +110,30 @@ class TrainConfig:
     learner_steps_per_iter: int = 4
     total_iters: int = 80_000
     batch_trajectories: int = 32  # trajectories sampled from buffer per learner step
+    # Cap on padded frames (Tmax * B) per learner forward, for the temporal archs
+    # only; 0 disables (pre-budget behavior). A temporal batch is padded to the
+    # longest trajectory in it, so activation memory scales with Tmax * B and NOT
+    # with the number of real steps -- one 700-step game pads all 64 columns to
+    # 700 and needs ~43 GB on the 1.67M transformer. RBC lengths are heavy-tailed
+    # (median ~26 steps, p99.9 ~1400), so without a cap the peak is unbounded and
+    # OOM is a matter of which batch draws the outlier. Over the cap the batch is
+    # split into length-sorted micro-batches whose gradients are accumulated into
+    # one optimizer step: same gradient, bounded memory (see
+    # RNaDLearner._split_for_budget). Set it from VRAM: peak is ~0.95 MB per
+    # padded frame for a 128-channel/4-block encoder, so ~24k frames ~= 23 GB.
+    max_batch_frames: int = 0
+    # Length-bucketed batch sampling: draw ``length_bucket_pool * batch``
+    # trajectories uniformly, sort them by length and return one of the
+    # ``length_bucket_pool`` contiguous blocks, chosen uniformly. 1 disables
+    # (plain uniform sampling). Every trajectory keeps the same marginal
+    # probability of landing in a batch (uniform pool x uniform block), but a
+    # batch now holds games of similar length, which is what actually cuts the
+    # padding: at batch 64 a uniform draw wastes ~80% of the padded grid on zeros.
+    # NOTE this correlates the games within a batch by length, so consecutive
+    # gradients are no longer i.i.d. batches of the buffer -- an intentional
+    # trade, and a difference worth stating when a run using it is compared
+    # against one that did not.
+    length_bucket_pool: int = 1
     buffer_capacity: int = 4096
     num_actors: int = 1  # >1 uses torch.multiprocessing (see selfplay.py)
     # Self-play action selection: True = sample the masked softmax (required for

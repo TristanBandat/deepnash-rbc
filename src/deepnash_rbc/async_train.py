@@ -171,10 +171,11 @@ class BatchPrefetcher:
     """
 
     def __init__(self, learner: RNaDLearner, buffer: ReplayBuffer,
-                 batch_size: int, min_fill: int, depth: int):
+                 batch_size: int, min_fill: int, depth: int, pool: int = 1):
         self._learner = learner
         self._buffer = buffer
         self._batch_size = batch_size
+        self._pool = pool
         self._min_fill = min_fill
         self._q: "queue.Queue[CollatedBatch]" = queue.Queue(maxsize=depth)
         self._stop = threading.Event()
@@ -188,7 +189,9 @@ class BatchPrefetcher:
             if len(self._buffer) < self._min_fill:
                 time.sleep(0.05)  # warmup: don't collate tiny early batches
                 continue
-            col = self._learner.collate(self._buffer.sample(self._batch_size))
+            col = self._learner.collate(
+                self._buffer.sample(self._batch_size, self._pool)
+            )
             while not self._stop.is_set():
                 try:
                     self._q.put(col, timeout=0.5)
@@ -292,7 +295,8 @@ def run_async(cfg: Config | None = None) -> None:
 
     prefetcher = (
         BatchPrefetcher(learner, buffer, cfg.train.batch_trajectories,
-                        cfg.train.min_buffer_to_train, cfg.train.prefetch_depth)
+                        cfg.train.min_buffer_to_train, cfg.train.prefetch_depth,
+                        cfg.train.length_bucket_pool)
         if cfg.train.prefetch_depth > 0 else None
     )
 
@@ -349,7 +353,10 @@ def run_async(cfg: Config | None = None) -> None:
             if prefetcher is not None:
                 stats = learner.update_collated(prefetcher.get(timeout=1.0))
             else:
-                stats = learner.update(buffer.sample(cfg.train.batch_trajectories))
+                stats = learner.update(
+                    buffer.sample(cfg.train.batch_trajectories,
+                                  cfg.train.length_bucket_pool)
+                )
             if stats:
                 last = stats
                 step = last["steps"]
