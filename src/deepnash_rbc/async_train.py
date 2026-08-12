@@ -14,6 +14,16 @@ Why this and not `selfplay.parallel_self_play`: that helper rebuilds its process
 pool every iteration (spawn + torch re-import each time), which dominates cost at
 this scale. Here the pool is persistent and the learner never blocks on it.
 
+Two knobs set the actor topology, and they are not interchangeable:
+  * ``async_actors`` -- processes, i.e. how many cores go to self-play.
+  * ``actor_games``  -- concurrent games *inside* each process. Above 1 the
+    process interleaves that many games on threads and serves them from a single
+    batched forward (``infer.InferenceBatcher``), which is 2-3x cheaper per
+    position than the batch-1 forward an actor would otherwise issue. Total
+    concurrent games is the product.
+Weights reach every actor through one shared slab (``weights.WeightBus``) rather
+than one pickle per actor, so broadcast cost no longer grows with actor count.
+
 Counters note: in async mode `total_iters`, `eval_every`, and `checkpoint_every`
 count LEARNER STEPS (not outer iterations).
 
@@ -30,7 +40,6 @@ import time
 from dataclasses import asdict
 from typing import Dict, List, Optional
 
-import numpy as np
 import torch
 import torch.multiprocessing as mp
 from tqdm import tqdm
@@ -45,33 +54,15 @@ from .checkpoints import (
 from .cli import config_from_args
 from .config import Config
 from .eval import evaluate
+from .infer import InferenceBatcher, play_games_forever, resolve_batch_size
 from .metrics import MetricsLogger, resume_metrics
-from .network import DeepNashNet
+from .network import make_net
 from .replay import ReplayBuffer
 from .rnad.trainer import CollatedBatch, RNaDLearner
 from .schedule import wait_until_allowed
 from .selfplay import play_one_game
 from .train import resolve_device
-
-
-# -- weight transport (numpy avoids torch shared-memory fd issues across procs) --
-def _sd_to_numpy(net: DeepNashNet) -> Dict[str, np.ndarray]:
-    return {k: v.detach().cpu().numpy().copy() for k, v in net.state_dict().items()}
-
-
-def _load_numpy_sd(net: DeepNashNet, sd: Dict[str, np.ndarray]) -> None:
-    net.load_state_dict({k: torch.from_numpy(v) for k, v in sd.items()})
-
-
-def _drain_latest(q: "mp.Queue"):
-    """Return the most recent item in a maxsize-1 queue, discarding older ones."""
-    item = None
-    try:
-        while True:
-            item = q.get_nowait()
-    except queue.Empty:
-        pass
-    return item
+from .weights import WeightBus
 
 
 # -- checkpoint resume -------------------------------------------------------
@@ -103,22 +94,24 @@ def load_resume(
 
 
 # -- actor process -----------------------------------------------------------
-def actor_loop(actor_id, init_sd, cfg: Config, traj_q, weight_q, stop_event,
+def actor_loop(actor_id, bus: WeightBus, cfg: Config, traj_q, stop_event,
                pause_event):
     torch.set_num_threads(1)  # one thread per actor: avoid oversubscription
     device = torch.device("cpu")
-    net = DeepNashNet(cfg.encoding, cfg.network)
-    _load_numpy_sd(net, init_sd)
+    net = make_net(cfg.encoding, cfg.network)
+    bus.wait_for_weights(net)
     net.eval()
+
+    if max(1, cfg.train.actor_games) > 1:
+        _batched_actor_loop(net, device, cfg, traj_q, stop_event, pause_event, bus)
+        return
 
     while not stop_event.is_set():
         # paused during an idle window: stop self-play so the rig stays quiet
         if pause_event.is_set():
             time.sleep(1.0)
             continue
-        latest = _drain_latest(weight_q)
-        if latest is not None:
-            _load_numpy_sd(net, latest)
+        bus.load_into(net)
         for traj in play_one_game(net, device, cfg):
             if stop_event.is_set() or pause_event.is_set():
                 break
@@ -126,6 +119,43 @@ def actor_loop(actor_id, init_sd, cfg: Config, traj_q, weight_q, stop_event,
                 traj_q.put(traj, timeout=1.0)
             except queue.Full:
                 pass  # learner is behind -> drop (backpressure), keep playing
+
+
+def _batched_actor_loop(net, device, cfg: Config, traj_q, stop_event, pause_event,
+                        bus: WeightBus) -> None:
+    """``actor_games > 1``: interleave several games behind one batched forward.
+
+    The game threads never touch the net directly -- only the batcher thread
+    does -- so weights are refreshed there, between batches, where no forward is
+    in flight. A game therefore still sees one consistent set of weights per
+    decision, exactly as in the one-game loop.
+    """
+    n_games = cfg.train.actor_games
+    batcher = InferenceBatcher(
+        net, device,
+        max_batch=resolve_batch_size(cfg),
+        max_wait_s=cfg.train.actor_batch_wait_ms / 1000.0,
+        on_batch=lambda: bus.load_into(net),
+    )
+
+    def should_stop() -> bool:
+        return stop_event.is_set() or pause_event.is_set()
+
+    def on_trajectory(traj) -> None:
+        try:
+            traj_q.put(traj, timeout=1.0)
+        except queue.Full:
+            pass  # learner is behind -> drop (backpressure), keep playing
+
+    try:
+        while not stop_event.is_set():
+            # paused during an idle window: stop self-play so the rig stays quiet
+            if pause_event.is_set():
+                time.sleep(1.0)
+                continue
+            play_games_forever(batcher, cfg, n_games, on_trajectory, should_stop)
+    finally:
+        batcher.stop()
 
 
 # -- batch prefetch (learner-side thread) --------------------------------------
@@ -141,10 +171,11 @@ class BatchPrefetcher:
     """
 
     def __init__(self, learner: RNaDLearner, buffer: ReplayBuffer,
-                 batch_size: int, min_fill: int, depth: int):
+                 batch_size: int, min_fill: int, depth: int, pool: int = 1):
         self._learner = learner
         self._buffer = buffer
         self._batch_size = batch_size
+        self._pool = pool
         self._min_fill = min_fill
         self._q: "queue.Queue[CollatedBatch]" = queue.Queue(maxsize=depth)
         self._stop = threading.Event()
@@ -158,7 +189,9 @@ class BatchPrefetcher:
             if len(self._buffer) < self._min_fill:
                 time.sleep(0.05)  # warmup: don't collate tiny early batches
                 continue
-            col = self._learner.collate(self._buffer.sample(self._batch_size))
+            col = self._learner.collate(
+                self._buffer.sample(self._batch_size, self._pool)
+            )
             while not self._stop.is_set():
                 try:
                     self._q.put(col, timeout=0.5)
@@ -184,7 +217,7 @@ def run_async(cfg: Config | None = None) -> None:
     device = resolve_device(cfg.train.device)
     ctx = mp.get_context("spawn")
 
-    net = DeepNashNet(cfg.encoding, cfg.network).to(device)
+    net = make_net(cfg.encoding, cfg.network).to(device)
     learner = RNaDLearner(cfg, net, device)
     buffer = ReplayBuffer(cfg.train.buffer_capacity)
     os.makedirs(version_dir(cfg.train.checkpoint_dir), exist_ok=True)
@@ -218,29 +251,26 @@ def run_async(cfg: Config | None = None) -> None:
     metrics = MetricsLogger(metrics_file, resume_wall_s=resume_wall)
 
     n_actors = max(1, cfg.train.async_actors)
+    n_games = max(1, cfg.train.actor_games)
     traj_q = ctx.Queue(maxsize=cfg.train.traj_queue_size)
-    weight_qs = [ctx.Queue(maxsize=1) for _ in range(n_actors)]
     stop_event = ctx.Event()
     pause_event = ctx.Event()  # set during idle windows to halt self-play
 
-    init_sd = _sd_to_numpy(net)
+    # one shared weight slab for every actor (cost independent of actor count);
+    # published before the actors start so they never run on random init weights
+    bus = WeightBus.create(net, ctx)
+    bus.publish(net)
+
     procs: List[mp.Process] = []
     for i in range(n_actors):
         p = ctx.Process(target=actor_loop,
-                        args=(i, init_sd, cfg, traj_q, weight_qs[i], stop_event,
-                              pause_event),
+                        args=(i, bus, cfg, traj_q, stop_event, pause_event),
                         daemon=True)
         p.start()
         procs.append(p)
 
     def _broadcast():
-        sd = _sd_to_numpy(net)
-        for wq in weight_qs:
-            _drain_latest(wq)
-            try:
-                wq.put_nowait(sd)
-            except queue.Full:
-                pass
+        bus.publish(net)
 
     def _save_checkpoint(note: str = ""):
         path = checkpoint_path(cfg.train.checkpoint_dir, step, prefix="deepnash_async")
@@ -265,13 +295,15 @@ def run_async(cfg: Config | None = None) -> None:
 
     prefetcher = (
         BatchPrefetcher(learner, buffer, cfg.train.batch_trajectories,
-                        cfg.train.min_buffer_to_train, cfg.train.prefetch_depth)
+                        cfg.train.min_buffer_to_train, cfg.train.prefetch_depth,
+                        cfg.train.length_bucket_pool)
         if cfg.train.prefetch_depth > 0 else None
     )
 
     n_params = sum(p.numel() for p in net.parameters())
-    print(f"[async] device={device} actors={n_actors} params={n_params:,} "
-          f"prefetch_depth={cfg.train.prefetch_depth}")
+    print(f"[async] device={device} actors={n_actors}x{n_games} games "
+          f"(batch<={resolve_batch_size(cfg) if n_games > 1 else 1}) "
+          f"params={n_params:,} prefetch_depth={cfg.train.prefetch_depth}")
 
     step = start_step
     last: Dict = {}
@@ -321,7 +353,10 @@ def run_async(cfg: Config | None = None) -> None:
             if prefetcher is not None:
                 stats = learner.update_collated(prefetcher.get(timeout=1.0))
             else:
-                stats = learner.update(buffer.sample(cfg.train.batch_trajectories))
+                stats = learner.update(
+                    buffer.sample(cfg.train.batch_trajectories,
+                                  cfg.train.length_bucket_pool)
+                )
             if stats:
                 last = stats
                 step = last["steps"]
@@ -360,12 +395,11 @@ def run_async(cfg: Config | None = None) -> None:
         # event); they are stateless self-play workers so this is safe.
         for p in procs:
             p.terminate()
-        # avoid feeder-thread join deadlocks on the queues
-        for q in [traj_q, *weight_qs]:
-            try:
-                q.cancel_join_thread()
-            except Exception:
-                pass
+        # avoid feeder-thread join deadlocks on the queue
+        try:
+            traj_q.cancel_join_thread()
+        except Exception:
+            pass
         for p in procs:
             p.join(timeout=3)
         print("[async] stopped")

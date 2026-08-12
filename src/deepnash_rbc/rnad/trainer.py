@@ -18,10 +18,11 @@ Two learner code paths share that structure:
   * ``fast=True`` (default) additionally vectorizes the two remaining per-step
     Python bottlenecks -- the legal-mask fill (scatter, not a per-row loop) and
     the v-trace recurrence (one [Tmax, B] padded recurrence, not a Python loop
-    per trajectory with many tiny kernel launches) -- and reads the logged
-    scalars back with a single device sync instead of four ``.item()`` calls.
-    It is **bit-identical** to the legacy path: same ops per element, same
-    reduction order; it only removes host overhead so the GPU stops idling.
+    per trajectory with many tiny kernel launches). It is **bit-identical** to
+    the legacy path: same ops per element, same reduction order; it only removes
+    host overhead so the GPU stops idling. (The fused single-sync readback of the
+    logged scalars used to live here too; both paths share it now, so the A/B
+    measures only the vectorization.)
 
   * ``fast=False`` is the original per-trajectory implementation, kept so
     ``deepnash-bench --compare`` can A/B the two on the real training loop.
@@ -34,6 +35,7 @@ bit-identical guarantee -- benchmark them on the GPU before trusting them.
 from __future__ import annotations
 
 import copy
+import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -41,7 +43,6 @@ import numpy as np
 import torch
 
 from ..config import Config
-from ..network import DeepNashNet
 from ..replay import Trajectory
 from ..encoding.moves import MOVE_ACTIONS
 from .neurd import all_actions_neurd_loss, neurd_loss
@@ -49,6 +50,33 @@ from .transform import transform_rewards
 from .vtrace import vtrace
 
 SENSE_SIZE = 64
+
+
+def lr_at_step(step: int, r, total_iters: int) -> float:
+    """Learning rate at 0-indexed learner ``step`` for the configured schedule.
+
+    Derived purely from ``step`` (and static config), so a resumed run continues
+    the same curve with no scheduler state to checkpoint -- see RNaDConfig's lr
+    schedule docs. ``r`` is the RNaDConfig. Shapes:
+      * warmup: linear 0 -> ``lr`` over ``lr_warmup`` steps (shared by all decays)
+      * constant: ``lr`` after warmup
+      * cosine/linear: decay ``lr`` -> ``lr_min`` from warmup end to ``total_iters``
+      * wsd: hold ``lr`` until ``lr_decay_start``, then cosine-decay to ``lr_min``
+    """
+    peak = r.lr
+    if step < r.lr_warmup:  # linear warmup (no-op when lr_warmup == 0)
+        return peak * (step + 1) / r.lr_warmup
+    if r.lr_schedule == "constant":
+        return peak
+    decay_start = r.lr_decay_start if r.lr_schedule == "wsd" else r.lr_warmup
+    if step < decay_start:  # wsd stable phase
+        return peak
+    end = max(total_iters, decay_start + 1)
+    frac = min(max((step - decay_start) / (end - decay_start), 0.0), 1.0)
+    if r.lr_schedule == "linear":
+        return peak + (r.lr_min - peak) * frac
+    # cosine + wsd tail: smooth anneal peak -> lr_min
+    return r.lr_min + 0.5 * (peak - r.lr_min) * (1.0 + math.cos(math.pi * frac))
 
 
 @dataclass
@@ -79,13 +107,14 @@ class RNaDLearner:
     def __init__(
         self,
         cfg: Config,
-        net: DeepNashNet,
+        net: torch.nn.Module,
         device: torch.device,
         fast: bool | None = None,
     ):
         self.cfg = cfg
         self.device = device
-        self.history = cfg.encoding.history  # stack depth for obs reconstruction
+        self.arch = cfg.network.arch  # "resnet" -> channel-stacked; else temporal
+        self.history = cfg.encoding.history  # stack depth for obs reconstruction (resnet)
         self.net = net.to(device)
         self.reg_net = copy.deepcopy(net).to(device).eval()
         for p in self.reg_net.parameters():
@@ -122,18 +151,58 @@ class RNaDLearner:
             return {}
         self.net.train()
 
+        # A temporal batch is padded to [Tmax, B] (see _to_device_seq), so its
+        # activation memory scales with Tmax * B -- one outlier trajectory pads
+        # all B columns to its length. Over the configured frame budget the batch
+        # is split into length-sorted micro-batches whose gradients are summed;
+        # since trajectories are independent (v-trace, the legal masks and both
+        # losses are all per-trajectory or per-step), the accumulated gradient is
+        # the unsplit batch's gradient, up to float summation order.
+        parts = self._split_for_budget(col)
+        n_total = sum(col.lengths)
+
+        self.opt.zero_grad(set_to_none=True)
+        totals = None
+        for sub in parts:
+            scaled = self._accumulate(sub, sum(sub.lengths) / n_total)
+            totals = scaled if totals is None else totals + scaled
+        return self._apply_update(totals, len(parts))
+
+    def _accumulate(self, col: CollatedBatch, scale: float) -> torch.Tensor:
+        """Forward + backward one (micro-)batch, adding into ``.grad``.
+
+        ``scale`` is the micro-batch's share of the full batch's steps: the losses
+        below are per-step means over *this* micro-batch, so weighting by that
+        share turns the sum over micro-batches back into the full batch's mean.
+        Returns the four logged scalars, likewise weighted, so summing them over
+        micro-batches gives the full batch's values (exact no-op at scale 1.0).
+        """
         trajectories, lengths = col.trajectories, col.lengths
-        obs, heads, actions, behavior_logp, legals = self._to_device(col)
 
         amp_ctx = (
             torch.autocast(device_type=self.device.type, dtype=torch.bfloat16)
             if self.amp
             else _nullcontext()
         )
-        with amp_ctx:
-            value, sense_logits, move_logits = self._fwd(obs)        # current policy
-            with torch.no_grad():
-                _, sense_reg, move_reg = self._reg_fwd(obs)          # regularization
+        if self.arch == "resnet":
+            obs, heads, actions, behavior_logp, legals = self._to_device(col)
+            with amp_ctx:
+                value, sense_logits, move_logits = self._fwd(obs)    # current policy
+                with torch.no_grad():
+                    _, sense_reg, move_reg = self._reg_fwd(obs)      # regularization
+        else:
+            seq, valid, (rows, cols), heads, actions, behavior_logp, legals = (
+                self._to_device_seq(col)
+            )
+            with amp_ctx:
+                value, sense_logits, move_logits = self._fwd(seq, valid)  # [T,B,*]
+                with torch.no_grad():
+                    _, sense_reg, move_reg = self._reg_fwd(seq, valid)
+            # gather [T,B,*] back to flat [N,*] in trajectory-step (glob) order, so
+            # everything below is identical to the resnet path.
+            value = value[rows, cols]
+            sense_logits, move_logits = sense_logits[rows, cols], move_logits[rows, cols]
+            sense_reg, move_reg = sense_reg[rows, cols], move_reg[rows, cols]
         value = value.float()
         sense_logits, move_logits = sense_logits.float(), move_logits.float()
         sense_reg, move_reg = sense_reg.float(), move_reg.float()
@@ -162,8 +231,63 @@ class RNaDLearner:
                 trajectories, lengths, value, logp, logp_reg, behavior_logp
             )
 
-        return self._losses_and_step(
-            value, vs_g, adv_g, taken_logit, entropy, head_data
+        return self._losses_and_backward(
+            value, vs_g, adv_g, taken_logit, entropy, head_data, scale
+        )
+
+    # -- micro-batching (padded-frame budget) --------------------------------
+    def _split_for_budget(self, col: CollatedBatch) -> List[CollatedBatch]:
+        """Split an oversized temporal batch into micro-batches of at most
+        ``train.max_batch_frames`` padded frames each.
+
+        Returns ``[col]`` unchanged when the budget is off (0), the arch is the
+        channel-stacked resnet (no time padding at all) or the batch already
+        fits -- so a run that never oversubscribes is untouched. Trajectories are
+        grouped in ascending length order, which both bounds ``Tmax * B`` per
+        micro-batch and makes each one length-homogeneous, so the split costs far
+        less padded compute than the single oversized batch it replaces.
+        """
+        budget = int(self.cfg.train.max_batch_frames or 0)
+        lengths = col.lengths
+        if budget <= 0 or self.arch == "resnet" or len(lengths) <= 1:
+            return [col]
+        if max(lengths) * len(lengths) <= budget:
+            return [col]
+
+        groups: List[List[int]] = []
+        cur: List[int] = []
+        for i in sorted(range(len(lengths)), key=lambda j: lengths[j]):
+            # ascending length -> lengths[i] is the group's Tmax once added
+            if cur and lengths[i] * (len(cur) + 1) > budget:
+                groups.append(cur)
+                cur = []
+            cur.append(i)
+        groups.append(cur)
+
+        longest = max(lengths)
+        if longest > budget:  # a single trajectory over budget cannot be split
+            print(
+                f"[learner] trajectory of {longest} steps exceeds "
+                f"max_batch_frames={budget}; running it alone (may still OOM)"
+            )
+        return [self._subset(col, g) for g in groups]
+
+    def _subset(self, col: CollatedBatch, idx: List[int]) -> CollatedBatch:
+        """The sub-batch holding trajectories ``idx`` (flat per-step rows gathered
+        in trajectory order, so ``lengths`` still describes the flat layout)."""
+        offs = np.cumsum([0] + list(col.lengths))
+        sel_np = np.concatenate([np.arange(offs[i], offs[i + 1]) for i in idx])
+        sel = torch.from_numpy(sel_np)
+        return CollatedBatch(
+            trajectories=[col.trajectories[i] for i in idx],
+            lengths=[col.lengths[i] for i in idx],
+            cur=col.cur[sel],            # gather: the sub-batch loses pinning, but
+            frames=col.frames,           # this path only runs on oversized batches
+            gather_idx=None if col.gather_idx is None else col.gather_idx[sel],
+            heads=col.heads[sel],
+            actions=col.actions[sel],
+            behavior_logp=col.behavior_logp[sel],
+            legals=[col.legals[j] for j in sel_np],
         )
 
     # -- batch flattening (shared; bit-identical values to the old inline build) --
@@ -179,26 +303,34 @@ class RNaDLearner:
         steps = [s for t in trajectories for s in t.steps]
         N = len(steps)
         cur_np = np.stack([s.obs for s in steps])                   # [N, F, 8, 8]
-        committed = [f for t in trajectories for f in t.frames]
-        frames_np = np.zeros((1 + len(committed), *cur_np.shape[1:]), dtype=cur_np.dtype)
-        if committed:
-            frames_np[1:] = np.stack(committed)                     # row 0 stays blank
-        # global row of each trajectory's first committed frame (0 = blank pad)
-        starts = np.cumsum([1] + [len(t.frames) for t in trajectories[:-1]])
-        start_per_step = np.repeat(starts, [len(t) for t in trajectories])
-        turns = np.fromiter((s.turn for s in steps), dtype=np.int64, count=N)
-        # per step: the (history-1) committed frames preceding it, exactly the
-        # window ObservationEncoder.tensor() emits (blank-padded on the left)
-        rel = turns[:, None] + np.arange(-(self.history - 1), 0, dtype=np.int64)
-        gather_idx = np.where(rel < 0, 0, rel + start_per_step[:, None])
-
         cur_t = torch.from_numpy(cur_np)
-        frames_t = torch.from_numpy(frames_np)
-        idx_t = torch.from_numpy(gather_idx)
-        if self.device.type == "cuda":
-            cur_t, frames_t, idx_t = (
-                x.pin_memory() for x in (cur_t, frames_t, idx_t)
-            )
+
+        if self.arch == "resnet":
+            # deduplicated committed frames + per-step gather window (the stack
+            # ObservationEncoder.tensor() emits, blank-padded on the left).
+            committed = [f for t in trajectories for f in t.frames]
+            frames_np = np.zeros((1 + len(committed), *cur_np.shape[1:]), dtype=cur_np.dtype)
+            if committed:
+                frames_np[1:] = np.stack(committed)                 # row 0 stays blank
+            # global row of each trajectory's first committed frame (0 = blank pad)
+            starts = np.cumsum([1] + [len(t.frames) for t in trajectories[:-1]])
+            start_per_step = np.repeat(starts, [len(t) for t in trajectories])
+            turns = np.fromiter((s.turn for s in steps), dtype=np.int64, count=N)
+            rel = turns[:, None] + np.arange(-(self.history - 1), 0, dtype=np.int64)
+            gather_idx = np.where(rel < 0, 0, rel + start_per_step[:, None])
+            frames_t = torch.from_numpy(frames_np)
+            idx_t = torch.from_numpy(gather_idx)
+            if self.device.type == "cuda":
+                cur_t, frames_t, idx_t = (
+                    x.pin_memory() for x in (cur_t, frames_t, idx_t)
+                )
+        else:
+            # temporal archs consume the ordered per-step frame sequence directly;
+            # no history stacking, so the dedup/gather machinery is unused.
+            frames_t = None
+            idx_t = None
+            if self.device.type == "cuda":
+                cur_t = cur_t.pin_memory()
         heads = torch.from_numpy(
             np.fromiter((s.head for s in steps), dtype=np.int64, count=len(steps))
         )
@@ -231,8 +363,37 @@ class RNaDLearner:
         behavior_logp = col.behavior_logp.to(self.device)
         return obs, heads, actions, behavior_logp, col.legals
 
-    # -- losses + optimizer step (shared by both paths) ----------------------
-    def _losses_and_step(self, value, vs_g, adv_g, taken_logit, entropy, head_data) -> dict:
+    def _to_device_seq(self, col: CollatedBatch):
+        # temporal path: pad the per-step frames into left-aligned [Tmax, B, F, 8, 8]
+        # sequences. The flat<->[Tmax,B] mapping (rows, cols) is built from
+        # ``lengths`` exactly as _vtrace_fast does, so a step's forward output and
+        # its v-trace target land at the same position; the caller gathers the
+        # [Tmax,B,*] head outputs back to flat [N,*] via out = y[rows, cols].
+        device = self.device
+        cur = col.cur.to(device, non_blocking=True).float()        # [N, F, 8, 8]
+        lengths = col.lengths
+        B = len(lengths)
+        Tmax = max(lengths)
+        r_list, c_list = [], []
+        for b, L in enumerate(lengths):                             # left-aligned
+            r_list.append(np.arange(L, dtype=np.int64))
+            c_list.append(np.full(L, b, dtype=np.int64))
+        rows = torch.from_numpy(np.concatenate(r_list)).to(device)
+        cols = torch.from_numpy(np.concatenate(c_list)).to(device)
+        F = cur.shape[1]
+        seq = torch.zeros((Tmax, B, F, *cur.shape[2:]), device=device, dtype=cur.dtype)
+        seq[rows, cols] = cur                                       # cur is in flat (glob) order
+        valid = torch.zeros((Tmax, B), dtype=torch.bool, device=device)
+        valid[rows, cols] = True
+        heads = col.heads.to(device)
+        actions = col.actions.to(device)
+        behavior_logp = col.behavior_logp.to(device)
+        return seq, valid, (rows, cols), heads, actions, behavior_logp, col.legals
+
+    # -- losses + backward (shared by both paths) ----------------------------
+    def _losses_and_backward(
+        self, value, vs_g, adv_g, taken_logit, entropy, head_data, scale: float
+    ) -> torch.Tensor:
         N = value.shape[0]
         # value loss: global per-step MSE against the v-trace targets
         value_loss = torch.mean((value - vs_g) ** 2)
@@ -252,30 +413,41 @@ class RNaDLearner:
 
         loss = policy_loss + self.cfg.rnad.value_coef * value_loss
 
-        self.opt.zero_grad(set_to_none=True)
-        loss.backward()
+        (loss if scale == 1.0 else loss * scale).backward()
+
+        # kept on-device and summed across micro-batches; read back once, after
+        # the optimizer step, so a normal (unsplit) step still costs one sync
+        stats = torch.stack(
+            [loss.detach(), policy_loss.detach(), value_loss.detach(), entropy.detach()]
+        )
+        return stats if scale == 1.0 else stats * scale
+
+    # -- optimizer step (once per learner step, after every micro-batch) ------
+    def _apply_update(self, totals: torch.Tensor, n_parts: int) -> dict:
         torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.cfg.rnad.grad_clip)
+        # step-derived lr (self.steps is the 0-indexed step being taken); constant
+        # schedule reproduces the fixed cfg.rnad.lr exactly.
+        lr = lr_at_step(self.steps, self.cfg.rnad, self.cfg.train.total_iters)
+        for g in self.opt.param_groups:
+            g["lr"] = lr
         self.opt.step()
 
         self.steps += 1
         self.maybe_swap_reg()
 
-        if self.fast:
-            # one device sync for all four scalars instead of four .item() calls
-            l, pl, vl, ent = torch.stack(
-                [loss.detach(), policy_loss.detach(), value_loss.detach(), entropy.detach()]
-            ).tolist()
-        else:
-            l, pl, vl, ent = (float(loss.item()), float(policy_loss.item()),
-                              float(value_loss.item()), float(entropy.item()))
-        return {
+        l, pl, vl, ent = totals.tolist()
+        out = {
             "loss": l,
             "policy_loss": pl,
             "value_loss": vl,
             "entropy": ent,
+            "lr": lr,
             "iteration": self.iteration,
             "steps": self.steps,
         }
+        if n_parts > 1:  # only logged when the frame budget actually split a batch
+            out["micro_batches"] = n_parts
+        return out
 
     # ====================================================================== #
     #  FAST PATH                                                             #

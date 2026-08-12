@@ -1,0 +1,90 @@
+{
+  "_comment": "GRU night campaign, run with: uv run python scripts/train_campaign.py --sweep sweep_gru_scale.json [--dry-run]. TWO runs, in order: (1) the v0.41.0 -> 500k resume CARRIED OVER VERBATIM from sweep_recipe.json run 2, so this file is the single campaign for the whole night and no external queueing (pgrep-wait etc.) is needed; (2) the fresh GRU size rung. THIS FILE SUPERSEDES sweep_recipe.json's run 2: kill the running sweep_recipe campaign before launching this one -- that is safe mid-run, checkpoints land every 10k (~20 min of work at risk) and run 1 below resumes v0.41.0 from its latest checkpoint wherever it stopped, with the step-derived cosine schedule giving the identical lr either way. ACTOR KNOBS, considered and rejected for BOTH entries: the 48x4 throughput block (async_actors 48, actor_games 4, drain_per_cycle 256, traj_queue_size 2048; 48 = what fits the 60-vCore VM next to the learner, per the batch-64 transformer work) IS legal on resumes -- only network.*/encoding.* are rejected on continuations -- but it triples game production and thus cuts the data-reuse ratio, which is exactly the confound the 12M transformer rung was criticized for (4.95x reuse). Run 1's value is the slope comparison against its OWN 190k-240k curve and run 2's value is the matched-recipe comparison against v0.41.0's curve, so both must keep v0.41.0's pinned 16-actor pipeline; the 48x4 block also was only ever benched under the batch-64 transformer learner, an untested gearing with a batch-32 GRU. Use it for future fresh recipes, not here. RUN 2 is the GRU counterpart of the transformer size ladder, testing whether temporal-mixer capacity is the binding constraint for the recurrent arch. WHY THIS EXISTS: the transformer ladder (v0.57.0 1.67M = 673, v0.58.0 4.49M = 594, v0.59.0 12.03M = 624 @80k) showed no size trend, but every rung ran the batch-64 COSINE recipe later shown to cost ~130 Elo (v0.57.0 cosine 685 vs v0.60.0 constant 814, same body), and the 12M rung had 4.95x data reuse -- so 'size does not help' was never cleanly established. This run re-asks the question on the GRU's KNOWN-GOOD recipe with a matched baseline: v0.41.0 (batch 32, lr 1e-4, eta 0.5, seed 0), whose Elo-vs-step curve to 240k (666 @190k -> 695 @240k) is the comparison target, extended to 500k by run 1 above. THE 'defaults' BLOCK REPLICATES v0.41.0's EFFECTIVE TRAJECTORY, not just its pinned config: the pinned config.json records only the original 80k segment (constant lr 1e-4, idle 19-6); the 80k->240k extension ran wsd with lr_decay_start=160000 / lr_min=1e-5 and window 17-7 (sweep_lr_decay.json entry 'gru-v0.41-to-240k-wsd', those keys never landed on disk). wsd holds 1e-4 until 160k then anneals to 1e-5 at 240k, which is pointwise identical to what v0.41.0 actually experienced (flat 80k segment + flat-then-anneal extension), so the two curves share the SAME lr at every step and any Elo delta at matched checkpoints is attributable to size alone. Actor knobs (async_actors 16, no actor_games, drain 64, queue 256) deliberately stay at v0.41.0's pinned values even though the batch-64 throughput knobs exist -- same reasoning as the sweep_recipe v0.41 extension: data-generation dynamics (reuse ratio) are part of the recipe being held fixed. batch stays 32 (old-config convention; the batch64+sqrt2-lr standard applies to new RECIPES, and this run's whole value is comparability with a batch-32 baseline). THE SIZE STEP: mixer_dim 128->256, mixer_layers 2->4, the same rung-2 geometry as the transformer ladder (tf-scale-d256-l4 = v0.58.0), so the two archs' size responses are directly comparable. For the GRU this means nn.GRU(dim, dim, layers) grows ~198k -> ~1.6M recurrent params (~8x the temporal-mixing capacity); total model grows ~1.7x. channels/enc_blocks/value_hidden stay fixed -- grow the mixer, not the per-frame CNN encoder, per the measured cost asymmetry (encoder pays on every T*B frame at 8x8; the mixer sees one D-vector per frame). nhead is restated but unused by the GRU arch. DECISION RULE: measured seed spread on this box is ~28 Elo (v0.60.0 814 / v0.62.0 842, same recipe), so with n=1 only a delta beyond ~30 Elo at matched steps is evidence; compare at 80k/120k/160k/200k/240k against v0.41.0's curve, NEVER against its endpoint alone. TIMING: starts automatically after run 1 (~8h, finishing ~05:30); the box is free until ~noon, i.e. ~6.5h. At the ~32k steps/h implied by the 8h/260k estimate (d256/l4 step cost is ~1.0-1.1x: the cuDNN GRU is tiny next to the CNN encoder even at 8x recurrent FLOPs), 240k steps is ~7.5h, so a manual stop at noon likely lands around ~200k. That is safe and still decisive: checkpoints land every 10k, the GRU's rise happens well before 200k, and because both curves share the lr schedule pointwise the matched-step comparison is unaffected by where the run stops; the lr schedule is step-derived and resume-safe, so the 200k->240k tail can be finished later with a plain resume entry if wanted. NO 'tournament' SECTION, on purpose (same as sweep_recipe.json): saves the ~45-60 min gauntlet inside the noon deadline and keeps every checkpoint. Rate afterwards on the desktop with: uv run python tools/tournament.py --worker 6 --model <landed version>. Forks/fresh runs auto-version at the requested bump, so this lands as the next free minor and leaves v0.41.0 untouched.",
+  "defaults": {
+    "encoding.history": 1,
+    "network.arch": "gru",
+    "network.blocks": 6,
+    "network.channels": 128,
+    "network.enc_blocks": 4,
+    "network.max_seq": 512,
+    "network.mixer_dim": 128,
+    "network.mixer_layers": 2,
+    "network.nhead": 4,
+    "network.value_hidden": 128,
+    "rnad.amp": true,
+    "rnad.c_clip": 1.0,
+    "rnad.compile_net": false,
+    "rnad.eta": 0.5,
+    "rnad.fast_learner": true,
+    "rnad.full_action_neurd": true,
+    "rnad.gamma": 1.0,
+    "rnad.grad_clip": 10.0,
+    "rnad.iteration_steps": 1000,
+    "rnad.lr": 0.0001,
+    "rnad.lr_schedule": "wsd",
+    "rnad.lr_decay_start": 160000,
+    "rnad.lr_min": 1e-05,
+    "rnad.lr_warmup": 0,
+    "rnad.neurd_clip": 2.5,
+    "rnad.rho_clip": 1.0,
+    "rnad.value_coef": 1.0,
+    "train.async_actors": 16,
+    "train.batch_trajectories": 32,
+    "train.buffer_capacity": 4096,
+    "train.checkpoint_every": 10000,
+    "train.device": "cuda",
+    "train.drain_per_cycle": 64,
+    "train.eval_every": 0,
+    "train.eval_games": 50,
+    "train.eval_opponents": [
+      "random",
+      "attacker",
+      "trout"
+    ],
+    "train.games_per_iter": 8,
+    "train.idle_schedule": true,
+    "train.learner_steps_per_iter": 4,
+    "train.min_buffer_to_train": 64,
+    "train.num_actors": 1,
+    "train.prefetch_depth": 2,
+    "train.progress": true,
+    "train.seconds_per_player": 900.0,
+    "train.seed": 0,
+    "train.total_iters": 240000,
+    "train.train_days": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "train.train_start_hour": 17,
+    "train.train_stop_hour": 7,
+    "train.traj_queue_size": 256,
+    "train.weight_broadcast_every": 20
+  },
+  "runs": [
+    {
+      "_comment": "RUN 1 -- long-horizon extension of the GRU v0.41.0 (lr 1e-4, eta 0.5, batch 32) from 240k to 500k, copied VERBATIM from sweep_recipe.json run 2 (see there for the full rationale; killing that campaign and re-running the entry here is a no-op for the science -- the resume picks up the latest checkpoint and the cosine lr is derived from the absolute step). Summary of the load-bearing parts: v0.41.0 was still improving at its 240k horizon (666 @190k -> 695 @240k); the pinned config.json records only the original 80k run (constant lr, idle 19-6), so the schedule and window must be restated -- cosine over the FULL 0->500k horizon resumes at ~5.8e-5 (mild warm restart from the old wsd's 1e-5 floor) and anneals back to 1e-5 at 500k. Resumes never inherit this file's 'defaults', so the wsd/160k schedule and 240k horizon above cannot leak into it; actor knobs stay at v0.41.0's pinned values (see top-level comment). ~8h expected.",
+      "name": "gru-v0.41-to-500k-cosine",
+      "resume": "v0.41.0",
+      "overrides": {
+        "train.total_iters": 500000,
+        "rnad.lr_schedule": "cosine",
+        "rnad.lr_warmup": 0,
+        "rnad.lr_min": 1e-05,
+        "train.train_start_hour": 17,
+        "train.train_stop_hour": 7
+      }
+    },
+    {
+      "_comment": "RUN 2 -- rung 2 of the GRU size ladder (rung 1 = v0.41.0 itself, already trained to 240k). Overrides contain nothing but the two mixer-size knobs, so any Elo delta vs v0.41.0 at matched steps is attributable to size alone.",
+      "name": "gru-scale-d256-l4",
+      "bump": "minor",
+      "overrides": {
+        "network.mixer_dim": 256,
+        "network.mixer_layers": 4
+      }
+    }
+  ]
+}

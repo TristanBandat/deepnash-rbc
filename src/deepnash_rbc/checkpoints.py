@@ -162,6 +162,13 @@ def ensure_version_config(
     (see ``ARCH_KEYS``) differs -- that would mean the version folder holds
     checkpoints with incompatible tensor shapes. The fix is to bump the project
     version in pyproject.toml. Non-architecture knobs may differ freely.
+
+    Fields added to the config dataclasses *after* a version was pinned are
+    absent from its config.json; those are compared against the dataclass
+    default instead, so adding an arch knob does not retroactively lock every
+    older version out of a resume. Left at its default such a field cannot have
+    changed the saved layout (the code that produced those checkpoints had no
+    such knob); set to anything else it drifts like any other field.
     """
     path = version_config_path(checkpoint_dir, version)
     # json round-trip normalizes tuples->lists so comparison matches the file.
@@ -169,14 +176,22 @@ def ensure_version_config(
 
     existing = read_version_config(checkpoint_dir, version)
     if existing is not None:
+        defaults = json.loads(json.dumps(asdict(type(cfg)())))
         for key in ARCH_KEYS:
-            if existing.get(key) != current.get(key):
+            saved, now = existing.get(key, {}), current.get(key, {})
+            drifted = {
+                field
+                for field in set(saved) | set(now)
+                if saved.get(field, defaults[key].get(field)) != now.get(field)
+            }
+            if drifted:
                 raise RuntimeError(
                     f"{key} config differs from {path}: this version's checkpoints "
                     f"were trained with a different architecture and would fail to "
                     f"load. Bump the version in pyproject.toml for a new layout.\n"
-                    f"  saved:   {existing.get(key)}\n"
-                    f"  current: {current.get(key)}"
+                    f"  fields:  {sorted(drifted)}\n"
+                    f"  saved:   {saved}\n"
+                    f"  current: {now}"
                 )
         return path
 

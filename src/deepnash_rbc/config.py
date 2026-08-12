@@ -32,6 +32,25 @@ class NetworkConfig:
     value_hidden: int = 128
     move_actions: int = MOVE_ACTIONS  # 73*64 + 1 (pass)
     sense_actions: int = SENSE_ACTIONS  # 64
+    # --- architecture selection ---
+    # "resnet" is the original channel-stacked ResNet (DeepNashNet). The temporal
+    # archs (gru/lstm/transformer/xlstm) are whole-game streaming-state models built
+    # by TemporalNet: they process one 19-channel frame per decision step and carry a
+    # recurrent/attention state across the game, so they ignore encoding.history
+    # (no channel stacking). See network.make_net.
+    arch: str = "resnet"  # resnet | gru | lstm | transformer | xlstm
+    # The following are read only by the temporal archs (ignored by resnet):
+    enc_blocks: int = 4  # per-frame encoder residual depth (on one [19,8,8] frame)
+    mixer_dim: int = 128  # token / recurrent-context dim D
+    mixer_layers: int = 2  # GRU/LSTM layers, transformer encoder layers, or xLSTM blocks
+    nhead: int = 4  # transformer / xlstm attention heads (ignored by gru/lstm)
+    max_seq: int = 512  # transformer/xlstm positional/context cap; assert Tmax <= max_seq
+    # --- xlstm-only (ignored by every other arch) ---
+    # Which block indices in the mixer_layers-deep stack are sLSTM blocks (the rest
+    # are mLSTM); the paper alternates a few mLSTM per sLSTM. Default (1,) => a 2-block
+    # [mLSTM, sLSTM] stack. Kept as a tuple so it is sweepable via train_campaign.
+    xlstm_slstm_at: tuple = (1,)
+    xlstm_conv_kernel: int = 4  # causal conv1d kernel inside the xLSTM blocks (paper default)
 
 
 @dataclass
@@ -55,8 +74,22 @@ class RNaDConfig:
     # action's logit is updated. Toggle for a clean flag-off/flag-on ablation.
     full_action_neurd: bool = True
     # --- optimization ---
-    lr: float = 5e-5
+    lr: float = 5e-5  # peak learning rate (the value the schedule warms up to)
     grad_clip: float = 10.0
+    # --- learning-rate schedule (step-derived, so it resumes correctly) ---
+    # The lr applied at learner step ``s`` is computed from ``s`` alone (see
+    # ``trainer.lr_at_step``); nothing is stored in the optimizer/checkpoint, so a
+    # resumed run picks the schedule back up at its restored step with no drift.
+    #   constant -> always ``lr`` (default; reproduces the pre-schedule behavior)
+    #   linear   -> warm up to ``lr`` over ``lr_warmup``, then decay to ``lr_min``
+    #   cosine   -> warm up, then cosine-anneal to ``lr_min``
+    #   wsd      -> warm up, hold ``lr`` until ``lr_decay_start``, then cosine-decay
+    #               to ``lr_min`` (warmup-stable-decay; decay onset is empirical)
+    # Decay spans from the decay start to ``train.total_iters``.
+    lr_schedule: str = "constant"
+    lr_warmup: int = 0  # linear warmup steps from 0 -> lr (0 disables warmup)
+    lr_decay_start: int = 0  # wsd only: hold lr until this step, then decay
+    lr_min: float = 0.0  # floor the decay lands on at train.total_iters
     # --- learner performance (model-neutral unless noted) ---
     # fast_learner: vectorized learner step (batched v-trace, scatter-built legal
     # masks, fused scalar readback). Bit-identical math to the legacy path -- it
@@ -77,8 +110,36 @@ class TrainConfig:
     learner_steps_per_iter: int = 4
     total_iters: int = 80_000
     batch_trajectories: int = 32  # trajectories sampled from buffer per learner step
+    # Cap on padded frames (Tmax * B) per learner forward, for the temporal archs
+    # only; 0 disables (pre-budget behavior). A temporal batch is padded to the
+    # longest trajectory in it, so activation memory scales with Tmax * B and NOT
+    # with the number of real steps -- one 700-step game pads all 64 columns to
+    # 700 and needs ~43 GB on the 1.67M transformer. RBC lengths are heavy-tailed
+    # (median ~26 steps, p99.9 ~1400), so without a cap the peak is unbounded and
+    # OOM is a matter of which batch draws the outlier. Over the cap the batch is
+    # split into length-sorted micro-batches whose gradients are accumulated into
+    # one optimizer step: same gradient, bounded memory (see
+    # RNaDLearner._split_for_budget). Set it from VRAM: peak is ~0.95 MB per
+    # padded frame for a 128-channel/4-block encoder, so ~24k frames ~= 23 GB.
+    max_batch_frames: int = 0
+    # Length-bucketed batch sampling: draw ``length_bucket_pool * batch``
+    # trajectories uniformly, sort them by length and return one of the
+    # ``length_bucket_pool`` contiguous blocks, chosen uniformly. 1 disables
+    # (plain uniform sampling). Every trajectory keeps the same marginal
+    # probability of landing in a batch (uniform pool x uniform block), but a
+    # batch now holds games of similar length, which is what actually cuts the
+    # padding: at batch 64 a uniform draw wastes ~80% of the padded grid on zeros.
+    # NOTE this correlates the games within a batch by length, so consecutive
+    # gradients are no longer i.i.d. batches of the buffer -- an intentional
+    # trade, and a difference worth stating when a run using it is compared
+    # against one that did not.
+    length_bucket_pool: int = 1
     buffer_capacity: int = 4096
     num_actors: int = 1  # >1 uses torch.multiprocessing (see selfplay.py)
+    # Self-play action selection: True = sample the masked softmax (required for
+    # R-NaD exploration). False = argmax (greedy) -- deterministic trajectories,
+    # collapses exploration; experiment-only, do not use for real training runs.
+    selfplay_sample: bool = True
     device: str = "cuda"  # falls back to cpu automatically if unavailable
     seconds_per_player: float = 900.0
     checkpoint_every: int = 10_000
@@ -87,11 +148,19 @@ class TrainConfig:
     # resume: None = fresh start; "auto" = latest checkpoint in checkpoint_dir;
     # or an explicit checkpoint path. Set via --resume on deepnash-train-async.
     resume: str | None = None
+    # Provenance: when this run was FORKED off another run's checkpoint (see
+    # scripts/train_campaign.py "from"), this records the source as
+    # "v<version>@<step>" so eval can reconstruct lineage from config.json alone.
+    # None for fresh runs and in-place resumes.
+    fork_source: str | None = None
     # --- evaluation / skill metrics ---
     # eval_every: int = 50        # run a skill eval every N iterations (0 disables)
     # eval_every: int = 10_000
     eval_every: int = 0
     eval_games: int = 50  # games per opponent (split evenly across colors)
+    # Eval action selection: False = argmax (greedy, deterministic -- current
+    # default). True = sample the masked softmax at eval time.
+    eval_sample: bool = False
     eval_opponents: tuple = (
         "random",
         "attacker",
@@ -122,6 +191,23 @@ class TrainConfig:
     # In async mode, eval_every / checkpoint_every / total_iters count LEARNER
     # STEPS, not outer iterations.
     async_actors: int = 16  # persistent CPU self-play workers
+    # Concurrent self-play games per actor PROCESS. 1 (the default) is the
+    # original one-game-at-a-time actor, bit-for-bit. Above 1 the actor plays
+    # this many games on this many threads and funnels every network query
+    # through one batched forward (see infer.py): a self-play actor is ~85-90%
+    # batch-1 forward, and batch 8-16 costs 2.3-3.4x less per sample on CPU
+    # depending on arch. Total concurrent games is async_actors * actor_games,
+    # so this is the knob for filling a many-core box without one process per
+    # game. Bench it on the training box (deepnash-bench --actor-games) --
+    # the sweet spot depends on cores, arch and how fast the learner drains.
+    actor_games: int = 1
+    # Cap on requests per batched forward; 0 => actor_games (batch everything
+    # that is in flight). Lower it to trade throughput for fresher weights.
+    actor_max_batch: int = 0
+    # How long the batcher waits for a straggler game still in Python before
+    # running the forward without it. Only paid when a game is slow: the batcher
+    # fires immediately once every in-flight game is waiting on it.
+    actor_batch_wait_ms: float = 2.0
     traj_queue_size: int = 256  # actor->learner queue cap (backpressure)
     min_buffer_to_train: int = 64  # warmup: learner waits for this many trajectories
     drain_per_cycle: int = 64  # max trajectories pulled from queue per learner cycle
@@ -141,3 +227,34 @@ class Config:
     network: NetworkConfig = field(default_factory=NetworkConfig)
     rnad: RNaDConfig = field(default_factory=RNaDConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
+
+
+def config_from_dict(data: dict) -> Config:
+    """Rebuild a :class:`Config` from a saved ``v<version>/config.json`` manifest.
+
+    Overlays the manifest onto current defaults rather than requiring an exact
+    match, so a manifest pinned before a field existed still loads (that field
+    keeps its default -- see ``checkpoints.ensure_version_config``). JSON has no
+    tuples, so list values are restored to tuples where the default is one.
+
+    This is what lets ``deepnash-bench`` measure the model a run *actually* uses
+    instead of the library defaults; benchmarking the wrong architecture gives
+    numbers that say nothing about the run you care about.
+    """
+    from dataclasses import fields, is_dataclass
+
+    cfg = Config()
+    for section_field in fields(cfg):
+        section = getattr(cfg, section_field.name)
+        saved = data.get(section_field.name)
+        if not isinstance(saved, dict) or not is_dataclass(section):
+            continue
+        known = {f.name: f for f in fields(section)}
+        for key, value in saved.items():
+            if key not in known:
+                continue  # manifest from a newer/older schema; ignore extras
+            current = getattr(section, key)
+            if isinstance(current, tuple) and isinstance(value, list):
+                value = tuple(value)
+            setattr(section, key, value)
+    return cfg

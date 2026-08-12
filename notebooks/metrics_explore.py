@@ -17,11 +17,9 @@ X, everything after X from earlier segments is stale and dropped.
 Run:  uv run --group notebooks marimo edit notebooks/metrics_explore.py
 """
 
-from __future__ import annotations
-
 import marimo
 
-__generated_with = "0.9.0"
+__generated_with = "0.23.11"
 app = marimo.App(width="medium")
 
 
@@ -39,15 +37,13 @@ def _():
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        # Metrics explorer
+    mo.md("""
+    # Metrics explorer
 
-        Point at a metrics JSONL below. The legacy default is the flat
-        `checkpoints/metrics.jsonl` that mixes every run and resume together; this
-        notebook untangles it into segments and a single canonical training curve.
-        """
-    )
+    Point at a metrics JSONL below. The legacy default is the flat
+    `checkpoints/metrics.jsonl` that mixes every run and resume together; this
+    notebook untangles it into segments and a single canonical training curve.
+    """)
     return
 
 
@@ -64,7 +60,7 @@ def _(Path, mo):
 
 
 @app.cell
-def _(np, pd, path_input):
+def _(np, path_input, pd):
     def load_metrics(path: str) -> pd.DataFrame:
         """Read a metrics JSONL into a DataFrame, unioning the train/skill columns.
 
@@ -84,12 +80,10 @@ def _(np, pd, path_input):
 
 @app.cell
 def _(df_raw, mo):
-    mo.md(
-        f"""
-        **Loaded** `{df_raw.shape[0]:,}` rows x `{df_raw.shape[1]}` columns.
-        Types present: `{df_raw['type'].value_counts().to_dict()}`.
-        """
-    )
+    mo.md(f"""
+    **Loaded** `{df_raw.shape[0]:,}` rows x `{df_raw.shape[1]}` columns.
+    Types present: `{df_raw['type'].value_counts().to_dict()}`.
+    """)
     return
 
 
@@ -121,12 +115,14 @@ def _(df_raw, np, pd):
 
     df_seg = add_segments(df_raw)
     summary = segment_summary(df_seg)
-    return add_segments, df_seg, segment_summary, summary
+    return df_seg, summary
 
 
 @app.cell
-def _(mo, summary):
-    mo.md("## Segments")
+def _(mo):
+    mo.md("""
+    ## Segments
+    """)
     return
 
 
@@ -140,7 +136,7 @@ def _(mo, summary):
 
 
 @app.cell
-def _(np, summary):
+def _(np):
     def reconstruct(df_seg, summary):
         """Drop stale rows and return the canonical, deduplicated training curve.
 
@@ -214,7 +210,7 @@ def _(canon, df_raw, mo, summary):
 
 
 @app.cell
-def _(df_seg, mo, np, plt):
+def _(df_seg, mo, plt):
     mo.md("### Raw timeline — step vs file position, colored by segment")
     # Decimate: 1M+ points would choke the renderer; stride to ~20k.
     _stride = max(1, len(df_seg) // 20000)
@@ -231,7 +227,7 @@ def _(df_seg, mo, np, plt):
 
 
 @app.cell
-def _(canon, mo):
+def _(mo):
     metric_select = mo.ui.dropdown(
         options=["loss", "policy_loss", "value_loss", "entropy"],
         value="loss",
@@ -248,7 +244,7 @@ def _(canon, mo):
 
 
 @app.cell
-def _(canon, metric_select, np, plt, smooth_slider, x_axis):
+def _(canon, metric_select, plt, smooth_slider, x_axis):
     _train = canon[canon["type"] == "train"]
     _m = metric_select.value
     _y = _train[_m].rolling(smooth_slider.value, min_periods=1).mean()
@@ -267,8 +263,10 @@ def _(canon, metric_select, np, plt, smooth_slider, x_axis):
 
 
 @app.cell
-def _(canon, mo):
-    mo.md("### Skill — win-rate vs fixed baselines (the curve that should rise)")
+def _(mo):
+    mo.md("""
+    ### Skill — win-rate vs fixed baselines (the curve that should rise)
+    """)
     return
 
 

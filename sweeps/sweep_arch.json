@@ -1,0 +1,117 @@
+{
+  "_comment": "xLSTM retune campaign, REVISED after the 240k extension of the gru/lstm/transformer incumbents (v0.38-v0.47) was evaluated. Run with: uv run python scripts/train_campaign.py --sweep sweep_arch.json [--dry-run]. Each run auto-versions into checkpoints/v<version>/ and is gauntleted (tournament block) against baselines + resnet/temporal incumbents, so it slots into the same Elo ladder. defaults set history=1 (temporal archs ignore stacked history) and pin the temporal + xlstm knobs; each run overrides network.arch=xlstm plus the knobs it varies. Revision rationale (why this differs from the earlier 80k-screen design): the earlier sweep transferred lr=1e-4 as the base because it won ~+97 Elo at 80k on both gru and transformer. The 240k extension overturned that. At lr=1e-4 the transformer PEAKED at 80k (811) then DECAYED to 765; at lr=5e-5 it kept climbing (717->752, still rising at 240k). And recurrent nets learn late: the LSTM did not click until ~90k (445->626 in one 10k window) and rose to 685 by 237k. Since xLSTM is an LSTM descendant (mLSTM+sLSTM): (a) we screen at 240k, not 80k -- an 80k cutoff would misjudge xLSTM the way it would have misjudged the LSTM, and the ladder incumbents are now at 240k so 80k is not comparable; (b) lr=5e-5 is the base for every run, with 1e-4 demoted to ONE probe that tests whether xLSTM decays like the transformer over the long horizon or not; (c) eta=0.5 is the default (the only eta=0.2 recurrent run, the gru, was the weakest of the four), kept as default with one eta=0.2 symmetry probe. The xLSTM-specific axis is the mLSTM/sLSTM composition (network.xlstm_slstm_at): since transformer (~ mLSTM parallel matrix-memory) beat gru (~ sLSTM gated recurrence), we sweep all-mLSTM (fastest on the vanilla sLSTM backend) vs mixed vs all-sLSTM.",
+  "defaults": {
+    "encoding.history": 1,
+    "network.channels": 128,
+    "network.value_hidden": 128,
+    "network.enc_blocks": 4,
+    "network.mixer_dim": 128,
+    "network.mixer_layers": 2,
+    "network.nhead": 4,
+    "network.max_seq": 512,
+    "network.xlstm_slstm_at": [
+      1
+    ],
+    "network.xlstm_conv_kernel": 4,
+    "rnad.eta": 0.5,
+    "rnad.iteration_steps": 1000,
+    "rnad.gamma": 1.0,
+    "rnad.rho_clip": 1.0,
+    "rnad.c_clip": 1.0,
+    "rnad.neurd_clip": 2.5,
+    "rnad.value_coef": 1.0,
+    "rnad.full_action_neurd": true,
+    "rnad.lr": 5e-05,
+    "rnad.grad_clip": 10.0,
+    "rnad.fast_learner": true,
+    "rnad.compile_net": false,
+    "rnad.amp": true,
+    "train.games_per_iter": 8,
+    "train.learner_steps_per_iter": 4,
+    "train.total_iters": 240000,
+    "train.batch_trajectories": 32,
+    "train.buffer_capacity": 4096,
+    "train.num_actors": 1,
+    "train.device": "cuda",
+    "train.seconds_per_player": 900.0,
+    "train.checkpoint_every": 10000,
+    "train.seed": 0,
+    "train.eval_every": 0,
+    "train.eval_games": 50,
+    "train.eval_opponents": [
+      "random",
+      "attacker",
+      "trout"
+    ],
+    "train.progress": true,
+    "train.idle_schedule": true,
+    "train.train_start_hour": 19,
+    "train.train_stop_hour": 6,
+    "train.train_days": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "train.async_actors": 16,
+    "train.traj_queue_size": 256,
+    "train.min_buffer_to_train": 64,
+    "train.drain_per_cycle": 64,
+    "train.weight_broadcast_every": 20,
+    "train.prefetch_depth": 2
+  },
+  "runs": [
+    {
+      "_comment": "Base: canonical lr=5e-5 (the horizon-preferred lr -- it kept climbing to 240k while 1e-4 decayed), default 2-block [mLSTM, sLSTM] stack. The reference every other run builds on.",
+      "name": "arch-xlstm-base",
+      "bump": "minor",
+      "overrides": {
+        "network.arch": "xlstm"
+      }
+    },
+    {
+      "_comment": "lr probe: 1e-4 won ~+97 Elo at 80k on gru AND transformer, but over 240k the transformer at 1e-4 peaked at 80k then decayed (811->765). This single run tests whether xLSTM follows that long-horizon decay or is the exception. Demoted from base to probe by the 240k findings.",
+      "name": "arch-xlstm-lr1e4",
+      "bump": "minor",
+      "overrides": {
+        "network.arch": "xlstm",
+        "rnad.lr": 1e-4
+      }
+    },
+    {
+      "_comment": "All-mLSTM (slstm_at=[] -> 2 mLSTM blocks): the most transformer-like, fully parallel matrix-memory variant, and the fastest on the vanilla sLSTM backend. Tests whether mLSTM's transformer-like memory drives xLSTM here. At the 5e-5 base lr.",
+      "name": "arch-xlstm-mlstm",
+      "bump": "minor",
+      "overrides": {
+        "network.arch": "xlstm",
+        "network.xlstm_slstm_at": []
+      }
+    },
+    {
+      "_comment": "All-sLSTM (slstm_at=[0,1] -> 2 sLSTM blocks): the recurrent, gated-memory extreme. Opposite pole from -mlstm; brackets the composition axis. At the 5e-5 base lr.",
+      "name": "arch-xlstm-slstm",
+      "bump": "minor",
+      "overrides": {
+        "network.arch": "xlstm",
+        "network.xlstm_slstm_at": [
+          0,
+          1
+        ]
+      }
+    }
+  ],
+  "tournament": {
+    "pair_games": 8,
+    "baselines": [
+      "random",
+      "trout",
+      "mht"
+    ],
+    "incumbents": 5,
+    "keep_top": null,
+    "workers": 8,
+    "threshold": 0.05,
+    "out": "results/tournament.jsonl"
+  }
+}

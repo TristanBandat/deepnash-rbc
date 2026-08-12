@@ -18,7 +18,7 @@ import chess
 import torch
 
 from .agent import RNaDPlayer
-from .network import DeepNashNet
+from .network import DeepNashNet, make_net
 
 try:
     from reconchess import LocalGame
@@ -206,7 +206,7 @@ def load_net(path: str, device: torch.device):
     ckpt = torch.load(path, map_location=device, weights_only=False)
     enc = EncodingConfig(**ckpt["enc_cfg"]) if "enc_cfg" in ckpt else EncodingConfig()
     net_cfg = NetworkConfig(**ckpt["net_cfg"]) if "net_cfg" in ckpt else NetworkConfig()
-    net = DeepNashNet(enc, net_cfg).to(device)
+    net = make_net(enc, net_cfg).to(device)
     state = ckpt["net"] if isinstance(ckpt, dict) and "net" in ckpt else ckpt
     net.load_state_dict(state)
     net.eval()

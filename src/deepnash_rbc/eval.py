@@ -2,8 +2,9 @@
 
 This is the metric that actually measures whether the agent is getting better at
 RBC (unlike the self-play losses, which are relative to a moving target). We play
-the current network -- GREEDILY (sample=False), so evaluation is deterministic
-given the opponent -- against reconchess's bundled bots, as both White and Black,
+the current network -- by default GREEDILY (argmax), so evaluation is deterministic
+given the opponent; set ``train.eval_sample=True`` to sample the masked softmax
+instead -- against reconchess's bundled bots, as both White and Black,
 and report win/draw/loss rates plus average game length.
 
 Baselines:
@@ -229,7 +230,7 @@ def evaluate(
         total_plies = 0
         played = 0
         for g in range(n):
-            agent = RNaDPlayer(net, device, history=history, sample=False)  # greedy
+            agent = RNaDPlayer(net, device, history=history, sample=cfg.train.eval_sample)
             try:
                 opponent = _make_opponent(opp_name)
             except Exception as e:

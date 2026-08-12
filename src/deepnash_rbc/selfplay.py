@@ -20,15 +20,15 @@ from reconchess import LocalGame, play_local_game
 
 from .agent import RNaDPlayer
 from .config import Config
-from .network import DeepNashNet
+from .network import DeepNashNet, make_net
 from .replay import Trajectory
 
 
 def play_one_game(net: DeepNashNet, device: torch.device, cfg: Config) -> List[Trajectory]:
     net.eval()
     history = cfg.encoding.history
-    white = RNaDPlayer(net, device, history=history, sample=True)
-    black = RNaDPlayer(net, device, history=history, sample=True)
+    white = RNaDPlayer(net, device, history=history, sample=cfg.train.selfplay_sample)
+    black = RNaDPlayer(net, device, history=history, sample=cfg.train.selfplay_sample)
     game = LocalGame(seconds_per_player=cfg.train.seconds_per_player)
     try:
         play_local_game(white, black, game=game)
@@ -69,7 +69,7 @@ def _worker(state, cfg: Config, n_games: int) -> List[Trajectory]:
     # thrashing (this was the cause of the multi-actor slowdown on a desktop CPU).
     torch.set_num_threads(1)
     device = torch.device("cpu")
-    net = DeepNashNet(cfg.encoding, cfg.network)
+    net = make_net(cfg.encoding, cfg.network)
     net.load_state_dict(state)
     net.eval()
     return collect(net, device, cfg, n_games)

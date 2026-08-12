@@ -1,0 +1,100 @@
+{
+  "checkpoint": "checkpoints/v0.13.0/deepnash_async_v0.13.0_70000.pt",
+  "engine": "/home/tristan/Dropbox/JKU/Semester_14/02_thesis/deepnash-rbc/tools/stockfish/stockfish-ubuntu-x86-64-bmi2",
+  "move_quality": {
+    "trout": {
+      "n": 100,
+      "wins": 77,
+      "draws": 0,
+      "losses": 23,
+      "win_rate": 0.77,
+      "draw_rate": 0.0,
+      "white": {
+        "n_moves": 627,
+        "n_scored": 529,
+        "n_no_eval": 98,
+        "acpl": 382.6,
+        "blunder_rate": 0.3951,
+        "top1_rate": 0.0321,
+        "n_truncated": 250,
+        "cost_A_mean": -17.9,
+        "cost_A_n": 476,
+        "cost_B_mean": 0.0,
+        "cost_B_n": 326
+      },
+      "black": {
+        "n_moves": 299,
+        "n_scored": 232,
+        "n_no_eval": 67,
+        "acpl": 284.2,
+        "blunder_rate": 0.362,
+        "top1_rate": 0.069,
+        "n_truncated": 48,
+        "cost_A_mean": 27.2,
+        "cost_A_n": 194,
+        "cost_B_mean": 0.0,
+        "cost_B_n": 191
+      },
+      "overall": {
+        "n_moves": 926,
+        "n_scored": 761,
+        "n_no_eval": 165,
+        "acpl": 352.6,
+        "blunder_rate": 0.385,
+        "top1_rate": 0.0434,
+        "n_truncated": 298,
+        "cost_A_mean": -4.9,
+        "cost_A_n": 670,
+        "cost_B_mean": 0.0,
+        "cost_B_n": 517
+      }
+    },
+    "mht": {
+      "n": 100,
+      "wins": 17,
+      "draws": 0,
+      "losses": 83,
+      "win_rate": 0.17,
+      "draw_rate": 0.0,
+      "white": {
+        "n_moves": 615,
+        "n_scored": 554,
+        "n_no_eval": 61,
+        "acpl": 110.2,
+        "blunder_rate": 0.1029,
+        "top1_rate": 0.0144,
+        "n_truncated": 280,
+        "cost_A_mean": -1.6,
+        "cost_A_n": 554,
+        "cost_B_mean": 0.0,
+        "cost_B_n": 293
+      },
+      "black": {
+        "n_moves": 701,
+        "n_scored": 644,
+        "n_no_eval": 57,
+        "acpl": 100.5,
+        "blunder_rate": 0.1242,
+        "top1_rate": 0.0512,
+        "n_truncated": 279,
+        "cost_A_mean": 4.9,
+        "cost_A_n": 596,
+        "cost_B_mean": 0.0,
+        "cost_B_n": 378
+      },
+      "overall": {
+        "n_moves": 1316,
+        "n_scored": 1198,
+        "n_no_eval": 118,
+        "acpl": 105.0,
+        "blunder_rate": 0.1143,
+        "top1_rate": 0.0342,
+        "n_truncated": 559,
+        "cost_A_mean": 1.8,
+        "cost_A_n": 1150,
+        "cost_B_mean": 0.0,
+        "cost_B_n": 671
+      }
+    }
+  }
+}

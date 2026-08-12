@@ -75,12 +75,34 @@ class ReplayBuffer:
             if len(self._buf) > self.capacity:
                 self._buf.pop(0)
 
-    def sample(self, n: int) -> List[Trajectory]:
+    def sample(self, n: int, pool: int = 1) -> List[Trajectory]:
+        """``n`` trajectories, uniformly (``pool <= 1``) or length-bucketed.
+
+        Bucketed (``pool > 1``): draw ``pool * n`` uniformly, sort by length and
+        return one of the ``pool`` contiguous blocks of ``n``, chosen uniformly.
+        Each trajectory's marginal probability of being returned is unchanged
+        (uniform pool membership x uniform block choice = n/len(buf), the same as
+        the uniform path), but the batch now holds games of similar length. That
+        is what the learner's padded [Tmax, B] batch cares about: RBC game lengths
+        are heavy-tailed, so a uniform batch is padded to an outlier and spends
+        most of its memory and compute on zeros (see TrainConfig.max_batch_frames).
+        """
         with self._lock:
             if not self._buf:
                 return []
             n = min(n, len(self._buf))
-            return random.sample(self._buf, n)
+            if pool <= 1:
+                return random.sample(self._buf, n)
+            k = min(len(self._buf), n * pool)
+            cand = random.sample(self._buf, k)
+        # random.sample returns in random order, so trimming the pool to a whole
+        # number of blocks here -- BEFORE sorting -- discards a uniformly random
+        # subset. Trimming after the sort would instead always drop the longest
+        # games, which is exactly the bias this must not introduce.
+        del cand[: k % n]
+        cand.sort(key=len)
+        start = random.randrange(len(cand) // n) * n
+        return cand[start: start + n]
 
     def __len__(self) -> int:
         return len(self._buf)

@@ -140,6 +140,18 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         "for each distinct value. Default: config value.",
     )
     p.add_argument(
+        "--arch",
+        choices=("resnet", "gru", "lstm", "transformer", "xlstm"),
+        default=None,
+        help="Network architecture (NetworkConfig.arch). 'resnet' is the original "
+        "channel-stacked ResNet; gru/lstm/transformer/xlstm are whole-game "
+        "streaming-state models that ignore --history. Shape/arch-locked to existing "
+        "checkpoints, so "
+        "bump the version in pyproject.toml when switching. Default: config value. "
+        "Temporal knobs (mixer_dim, mixer_layers, enc_blocks, nhead, max_seq) are set "
+        "via --set network.<field>=<value>.",
+    )
+    p.add_argument(
         "--set",
         dest="overrides",
         action="append",
@@ -179,6 +191,17 @@ def build_parser(prog: str | None = None) -> argparse.ArgumentParser:
         help="Persistent CPU self-play workers for deepnash-train-async. Each is "
         "pinned to one torch thread, so set this near your core count minus a few "
         "for the learner (e.g. ~56 on a 60-core box). Default: use the config value.",
+    )
+    p.add_argument(
+        "--actor-games",
+        type=int,
+        default=None,
+        help="Concurrent self-play games per actor process (deepnash-train-async). "
+        "1 (default) is the original one-game-at-a-time actor. Above 1 the actor "
+        "interleaves this many games on threads and serves them from one batched "
+        "forward, which costs 2-3x less per position on CPU than batch 1. Total "
+        "concurrent games is --async-actors x --actor-games. Tune with "
+        "deepnash-bench --actor-games. Default: use the config value.",
     )
     p.add_argument(
         "--num-actors",
@@ -245,6 +268,8 @@ def config_from_args(argv: list[str] | None = None, prog: str | None = None) -> 
         cfg.network.blocks = args.blocks
     if args.history is not None:
         cfg.encoding.history = args.history
+    if args.arch is not None:
+        cfg.network.arch = args.arch
 
     if args.checkpoint_dir is not None:
         cfg.train.checkpoint_dir = args.checkpoint_dir
@@ -263,6 +288,8 @@ def config_from_args(argv: list[str] | None = None, prog: str | None = None) -> 
         cfg.train.eval_opponents = tuple(args.eval_opponents)
     if args.async_actors is not None:
         cfg.train.async_actors = args.async_actors
+    if args.actor_games is not None:
+        cfg.train.actor_games = args.actor_games
     if args.num_actors is not None:
         cfg.train.num_actors = args.num_actors
     if args.resume is not None:

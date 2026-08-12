@@ -14,12 +14,34 @@ Checkpoint agents play in deployment mode by default: sampled with
 --threshold truncation (see RNaDPlayer.sample_threshold); use --greedy to
 evaluate argmax play instead.
 
+To enter (or finish entering) one training run on the ladder, use
+--model VERSION: every checkpoint of that version plays every other player --
+the whole existing field plus the baselines -- and its own checkpoints play each
+other, while pairs that touch neither are skipped. The version's checkpoints are
+added to the field automatically, so no globs are needed and the flag can be
+repeated to do several runs at once.
+
+To add a few fresh checkpoints to a big existing ladder without replaying the
+whole O(N^2) field, use --vs-top N: players that have no games yet in --out
+play against the current top-N established players (ranked by Elo from --out),
+every baseline, and each other; established-vs-established pairs are skipped
+entirely. Combining it with --model swaps that "no games yet" guess for the
+named run, which is what you want when the run already has some games on the
+ladder (e.g. it was extended with new checkpoints, or a previous --model pass
+was interrupted).
+
 Examples:
 
     uv run python tools/tournament.py               # everything, auto
     uv run python tools/tournament.py \
         'checkpoints/v0.12.0/*.pt' random trout mht \
         --pair-games 8 --out results/tournament_v12.jsonl
+    uv run python tools/tournament.py --dry-run     # show the schedule size
+    uv run python tools/tournament.py \
+        'checkpoints/v0.13.0/*.pt' --vs-top 20      # new nets vs current top 20
+    uv run python tools/tournament.py --model v0.58.0 --dry-run
+    uv run python tools/tournament.py --model v0.58.0            # vs whole field
+    uv run python tools/tournament.py --model v0.58.0 --vs-top 20  # cheap version
 
 The leaderboard is printed at the end (and can be recomputed any time with
 --leaderboard-only). Elo is anchored so random = 0 when present.
@@ -47,6 +69,24 @@ _WORKER: dict = {}
 
 
 # ------------------------------------------------------------------ players
+def resolve_model(spec: str) -> dict[str, str]:
+    """Map display name -> path for every checkpoint of one training run.
+
+    `spec` is a version as it appears under checkpoints/ ("v0.58.0"), or a path
+    to such a directory ("checkpoints/v0.58.0"); both forms are accepted so the
+    flag works with shell completion.
+    """
+    d = Path(spec)
+    if not d.is_dir():
+        d = ROOT / "checkpoints" / Path(spec.rstrip("/")).name
+    if not d.is_dir():
+        sys.exit(f"--model {spec}: no such checkpoint directory ({d})")
+    paths = sorted(d.glob("*.pt"))
+    if not paths:
+        sys.exit(f"--model {spec}: no .pt checkpoints in {d}")
+    return {p.stem.replace("deepnash_async_", ""): str(p.resolve()) for p in paths}
+
+
 def resolve_players(specs: list[str]) -> dict[str, str]:
     """Map display name -> spec (baseline name or checkpoint path)."""
     players: dict[str, str] = {}
@@ -134,39 +174,10 @@ def _play_game(task):
 
 
 # -------------------------------------------------------------- leaderboard
-def bradley_terry(rows: list[dict], names: list[str]) -> dict[str, float]:
-    """Fit BT strengths (draws = half win each); return Elo, anchored at
-    random=0 if present, else mean 0."""
-    idx = {n: i for i, n in enumerate(names)}
-    n = len(names)
-    score = [0.0] * n                      # total score of player i
-    pair_n = [[0.0] * n for _ in range(n)]  # games between i and j
-    for r in rows:
-        if r["winner"] == "error" or r["white"] not in idx or r["black"] not in idx:
-            continue
-        w, b = idx[r["white"]], idx[r["black"]]
-        pair_n[w][b] += 1
-        pair_n[b][w] += 1
-        if r["winner"] == "draw":
-            score[w] += 0.5
-            score[b] += 0.5
-        else:
-            score[idx[r[r["winner"]]]] += 1.0
-
-    p = [1.0] * n
-    for _ in range(500):  # MM iterations
-        new = []
-        for i in range(n):
-            denom = sum(pair_n[i][j] / (p[i] + p[j]) for j in range(n) if j != i)
-            # clamp: undefeated/never-scoring players have no finite MLE
-            s = min(max(score[i], 0.5), sum(pair_n[i]) - 0.5) if sum(pair_n[i]) else 0.5
-            new.append(s / denom if denom else p[i])
-        norm = math.exp(sum(math.log(x) for x in new) / n)
-        p = [x / norm for x in new]
-
-    elo = {name: 400.0 * math.log10(p[i]) for name, i in idx.items()}
-    anchor = elo.get("random", sum(elo.values()) / len(elo))
-    return {name: e - anchor for name, e in elo.items()}
+# The BT fit lives in the package (deepnash_rbc.analysis.elo) so the policy-mode
+# arena, which places new agents on *this* ladder's scale, fits with exactly the
+# same estimator instead of a drifting copy.
+from deepnash_rbc.analysis.elo import bradley_terry  # noqa: E402
 
 
 def print_leaderboard(rows: list[dict], players: dict[str, str]):
@@ -222,6 +233,17 @@ def main():
     ap.add_argument("--net-cache", type=int, default=8,
                     help="nets kept in memory per worker (LRU)")
     ap.add_argument("--out", default="results/tournament.jsonl")
+    ap.add_argument("--model", action="append", default=None, metavar="VERSION",
+                    help="play every checkpoint of this run (e.g. v0.58.0) "
+                         "against the whole field and against each other; "
+                         "pairs touching no --model checkpoint are skipped. "
+                         "Repeatable")
+    ap.add_argument("--vs-top", type=int, default=None, metavar="N",
+                    help="only schedule players with no games yet in --out "
+                         "against the top-N established players (by Elo from "
+                         "--out); skip established-vs-established pairs")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="print how many games would be played, then exit")
     ap.add_argument("--leaderboard-only", action="store_true",
                     help="recompute the leaderboard from --out and exit")
     args = ap.parse_args()
@@ -231,11 +253,26 @@ def main():
         + DEFAULT_BASELINES
     )
     players = resolve_players(specs)
+
+    # --model: the focus set. Its checkpoints join the field even if the
+    # positional specs (or the auto default, on a run whose files landed after
+    # the glob) would not have picked them up.
+    focus: set[str] = set()
+    for spec in args.model or []:
+        ckpts = resolve_model(spec)
+        players.update(ckpts)
+        focus |= set(ckpts)
+
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     rows = []
     if out.exists():
-        rows = [json.loads(line) for line in out.read_text().splitlines() if line]
+        try:
+            rows = [json.loads(line) for line in out.read_text().splitlines() if line]
+        except json.JSONDecodeError:
+            sys.exit(f"{out} is not a JSONL results file -- --out expects the "
+                     f"per-game results (e.g. results/tournament.jsonl), not a "
+                     f"rendered leaderboard")
 
     if args.leaderboard_only:
         print_leaderboard(rows, players)
@@ -243,11 +280,75 @@ def main():
 
     # resume: schedule only what is missing per pair
     done = defaultdict(int)
+    opponents = defaultdict(set)
     for r in rows:
         if r["winner"] != "error":
             done[frozenset((r["white"], r["black"]))] += 1
+            opponents[r["white"]].add(r["black"])
+            opponents[r["black"]].add(r["white"])
+
+    # which unordered pairs are eligible for scheduling
+    if args.vs_top is not None:
+        baselines = {n for n in players if n in BASELINES}
+        # Classify "new" players so a stopped run resumes to the same schedule.
+        # A new checkpoint only ever plays anchors (top-N + baselines) or other
+        # new checkpoints, so "every opponent seen so far is an anchor or new"
+        # stays true no matter how many of its games are already recorded --
+        # unlike "has zero games", which flips after the first game. Solve for
+        # it as a fixpoint; the top-N is fit from established-vs-established
+        # games only (bradley_terry ignores games touching a player outside its
+        # name list), so the anchor set does not drift as new games land.
+        #
+        # --model states the focus set outright, so no inference is needed (and
+        # a run that already has games -- extended, or a resumed --model pass --
+        # is still scheduled in full).
+        top: list[str] = []
+        if focus:
+            new = set(focus)
+            established = [n for n in players if n not in new]
+            if not established:
+                sys.exit("--vs-top needs existing results in --out to rank opponents")
+            elo = bradley_terry(rows, established)
+            top = sorted(established, key=lambda n: -elo[n])[:args.vs_top]
+            anchors = (set(top) | baselines) - new
+        else:
+            new = {n for n in players if not opponents[n]}
+            while True:
+                established = [n for n in players if n not in new]
+                if not established:
+                    sys.exit("--vs-top needs existing results in --out to rank "
+                             "opponents")
+                elo = bradley_terry(rows, established)
+                top = sorted(established, key=lambda n: -elo[n])[:args.vs_top]
+                anchors = (set(top) | baselines) - new
+                grown = {n for n in players
+                         if opponents[n] and opponents[n] <= (anchors | new)}
+                if grown <= new:
+                    break
+                new |= grown
+            # new checkpoints play the top-N, every baseline, and each other
+            if not new:
+                print("--vs-top: no new players (all already have games in --out)")
+        print(f"--vs-top {args.vs_top}: {len(new)} "
+              f"{'--model' if focus else 'new'} player(s) vs "
+              f"{len(anchors)} anchors (top-{len(top)} + baselines) "
+              f"and each other")
+        pairs = [(a, b) for a in new for b in anchors]
+        pairs += list(combinations(new, 2))
+    elif focus:
+        # Every pair that touches the focus set: its checkpoints vs the whole
+        # field, plus the focus set's own internal ladder.
+        _focus = sorted(focus)  # stable schedule across invocations
+        rest = [n for n in players if n not in focus]
+        print(f"--model {' '.join(args.model)}: {len(_focus)} checkpoint(s) vs "
+              f"{len(rest)} other player(s) and each other")
+        pairs = [(a, b) for a in _focus for b in rest]
+        pairs += list(combinations(_focus, 2))
+    else:
+        pairs = list(combinations(players, 2))
+
     tasks = []
-    for a, b in combinations(players, 2):
+    for a, b in pairs:
         have = done[frozenset((a, b))]
         for g in range(have, args.pair_games):
             white, black = (a, b) if g % 2 == 0 else (b, a)
@@ -259,6 +360,9 @@ def main():
     print(f"{len(players)} players, {len(tasks)} games to play "
           f"({engine} vs engine bots, ~30-60s each; rest are fast) "
           f"({len(rows)} already in {out})")
+
+    if args.dry_run:
+        return
 
     if tasks:
         ctx = mp.get_context("spawn")

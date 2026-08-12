@@ -13,12 +13,28 @@ short window at each actor count. Running them together is the point: it capture
 the actual GPU step time, the time the loop spends *waiting on data* vs. *busy on
 the GPU*, the per-step cost of draining the queue and broadcasting weights, and
 the trajectory-queue occupancy (empty => actor-bound, full => over-provisioned).
-From those real timings it recommends the smallest actor count that keeps the
-buffer fresh without saturating the queue.
 
-Run:  uv run deepnash-bench                         (sweep up to the core count)
-       uv run deepnash-bench --counts 16,32,56 --measure 30 --json bench.json
-       uv run deepnash-bench --apply                (write the pick into config.py)
+Two things decide whether the answer is useful:
+
+**Benchmark the right model.** Pass ``--version``/``--config`` to load a run's own
+``config.json``. Without it the *library defaults* are measured -- a different
+architecture from anything you are training, so every number is about a model
+that does not exist in your campaign.
+
+**Optimize for the right thing.** Once the actors out-run the learner the buffer
+is permanently full and extra trajectories do not make training step faster --
+so a pure-throughput objective calls them waste and tells you to cut cores. But
+they are still buying something: a shorter *off-policy horizon*
+(``buffer_capacity / fresh_per_step``, the learner steps of policy drift spanned
+by the buffer, linear in actor throughput) and lower sample reuse. If that
+freshness is what you want the cores for, pass ``--max-horizon`` and the pick
+becomes the cheapest config reaching it. ``buffer_capacity`` is the other lever
+on the same quantity and costs no cores -- sweep it with ``--set``.
+
+Run:  uv run deepnash-bench --version 0.59.0 --counts 8,16,30,48 \
+          --actor-games 1,2,4 --max-horizon 150 --json bench.json
+      uv run deepnash-bench --version 0.59.0 --set train.buffer_capacity=2048 ...
+      uv run deepnash-bench --apply          (write the pick into config.py)
 """
 
 from __future__ import annotations
@@ -35,12 +51,15 @@ import torch
 import torch.multiprocessing as mp
 
 from . import config as config_mod
-from .async_train import BatchPrefetcher, _drain_latest, _sd_to_numpy, actor_loop
-from .config import Config
-from .network import DeepNashNet
+from .async_train import BatchPrefetcher, actor_loop
+from .checkpoints import existing_versions, find_latest_checkpoint, read_version_config
+from .cli import _apply_overrides
+from .config import Config, config_from_dict
+from .network import make_net
 from .replay import ReplayBuffer
 from .rnad.trainer import RNaDLearner
 from .train import resolve_device
+from .weights import WeightBus
 
 
 def _now() -> float:
@@ -53,12 +72,30 @@ def _sync(device: torch.device) -> None:
 
 
 # -- one real-training-loop measurement at a fixed actor count ----------------
+def load_actor_weights(net, path: Optional[str]) -> Optional[str]:
+    """Put trained weights on the bench net, because game length is policy-dependent.
+
+    A randomly initialized agent does not find the opponent king, so its games run
+    to the move limit; a trained one finishes fast. Measured on v0.43.0: 135
+    decisions per trajectory at init vs 34.7 trained -- a 3.8x difference in
+    trajectories/s from policy strength alone. Benchmarking with init weights
+    therefore understates actor throughput several-fold and, through
+    ``fresh_per_step``, corrupts every derived off-policy number.
+    """
+    if not path:
+        return None
+    state = torch.load(path, map_location="cpu", weights_only=False)
+    net.load_state_dict(state["net"] if "net" in state else state)
+    return path
+
+
 def measure_training(
     cfg: Config,
     n_actors: int,
     warmup_s: float,
     measure_s: float,
     fast: Optional[bool] = None,
+    weights: Optional[str] = None,
 ) -> Dict[str, float]:
     """Run the actual async loop (GPU learner + ``n_actors`` CPU actors) and time it.
 
@@ -82,21 +119,23 @@ def measure_training(
     ctx = mp.get_context("spawn")
     device = resolve_device(cfg.train.device)
 
-    net = DeepNashNet(cfg.encoding, cfg.network).to(device)
+    net = make_net(cfg.encoding, cfg.network)
+    load_actor_weights(net, weights)   # before .to(device): actors get these too
+    net = net.to(device)
     learner = RNaDLearner(cfg, net, device, fast=fast)
     buffer = ReplayBuffer(cfg.train.buffer_capacity)
 
     traj_q = ctx.Queue(maxsize=cfg.train.traj_queue_size)
-    weight_qs = [ctx.Queue(maxsize=1) for _ in range(n_actors)]
     stop_event = ctx.Event()
     pause_event = ctx.Event()  # never set here; actor_loop requires it
 
-    init_sd = _sd_to_numpy(net)
+    bus = WeightBus.create(net, ctx)
+    bus.publish(net)
     procs: List[mp.Process] = []
     for i in range(n_actors):
         p = ctx.Process(
             target=actor_loop,
-            args=(i, init_sd, cfg, traj_q, weight_qs[i], stop_event, pause_event),
+            args=(i, bus, cfg, traj_q, stop_event, pause_event),
             daemon=True,
         )
         p.start()
@@ -104,7 +143,8 @@ def measure_training(
 
     prefetcher = (
         BatchPrefetcher(learner, buffer, cfg.train.batch_trajectories,
-                        cfg.train.min_buffer_to_train, cfg.train.prefetch_depth)
+                        cfg.train.min_buffer_to_train, cfg.train.prefetch_depth,
+                        cfg.train.length_bucket_pool)
         if cfg.train.prefetch_depth > 0 else None
     )
 
@@ -112,6 +152,8 @@ def measure_training(
     acc = {"gpu": 0.0, "wait": 0.0, "host": 0.0}
     steps = traj = q_samples = 0
     q_occ_sum = q_occ_max = 0.0
+    buf_sum = 0.0
+    buf_min = float("inf")
     qmax = float(cfg.train.traj_queue_size)
     cap = cfg.train.traj_queue_size
 
@@ -168,7 +210,10 @@ def measure_training(
                 fetch_wait = _now() - t0
                 sample_host = 0.0
             else:
-                col = learner.collate(buffer.sample(cfg.train.batch_trajectories))
+                col = learner.collate(
+                    buffer.sample(cfg.train.batch_trajectories,
+                                  cfg.train.length_bucket_pool)
+                )
                 fetch_wait = 0.0
                 sample_host = _now() - t0
             _sync(device)              # flush any prior work so we time only this step
@@ -182,13 +227,7 @@ def measure_training(
             t0 = _now()
             step_for_broadcast += 1
             if step_for_broadcast % cfg.train.weight_broadcast_every == 0:
-                sd = _sd_to_numpy(net)
-                for wq in weight_qs:
-                    _drain_latest(wq)
-                    try:
-                        wq.put_nowait(sd)
-                    except queue.Full:
-                        pass
+                bus.publish(net)
             broadcast = _now() - t0
 
             if measuring:
@@ -202,6 +241,9 @@ def measure_training(
                 frac = occ / qmax if qmax else 0.0
                 q_occ_sum += frac
                 q_occ_max = max(q_occ_max, frac)
+                filled = len(buffer)
+                buf_sum += filled
+                buf_min = min(buf_min, filled)
         wall = _now() - measure_start
     finally:
         if prefetcher is not None:
@@ -209,28 +251,36 @@ def measure_training(
         stop_event.set()
         for p in procs:
             p.terminate()
-        for q in [traj_q, *weight_qs]:
-            try:
-                q.cancel_join_thread()
-            except Exception:
-                pass
+        try:
+            traj_q.cancel_join_thread()
+        except Exception:
+            pass
         for p in procs:
             p.join(timeout=3)
 
     wall = max(wall, 1e-9)
     steps = max(steps, 0)
     sps = steps / wall if wall else 0.0
+    tps = traj / wall
+    fresh = (traj / steps) if steps else 0.0
     variant = (cfg.rnad.fast_learner if fast is None else fast)
     return {
         "actors": n_actors,
+        "actor_games": max(1, cfg.train.actor_games),
+        "concurrent_games": n_actors * max(1, cfg.train.actor_games),
         "learner": "fast" if variant else "legacy",
         "prefetch_depth": cfg.train.prefetch_depth,
         "device": str(device),
         "wall_s": round(wall, 2),
         "learner_steps": steps,
         "steps_per_s": round(sps, 3),
-        "traj_per_s": round(traj / wall, 3),
-        "fresh_per_step": round((traj / steps) if steps else 0.0, 3),
+        "traj_per_s": round(tps, 3),
+        "fresh_per_step": round(fresh, 3),
+        # --- how off-policy the learner's data is (see off_policy_metrics) ---
+        "horizon_steps": round(_horizon(cfg, fresh), 1),
+        "reuse": round(_reuse(cfg, sps, tps), 2),
+        "buffer_capacity": cfg.train.buffer_capacity,
+        "batch_trajectories": cfg.train.batch_trajectories,
         "gpu_step_ms": round(1000 * acc["gpu"] / steps, 2) if steps else float("nan"),
         "gpu_busy_frac": round(acc["gpu"] / wall, 3),
         "data_wait_frac": round(acc["wait"] / wall, 3),
@@ -238,7 +288,44 @@ def measure_training(
         "q_occ_avg": round(q_occ_sum / q_samples, 3) if q_samples else 0.0,
         "q_occ_max": round(q_occ_max, 3),
         "q_cap": cap,
+        "weights": os.path.basename(weights) if weights else "random-init",
+        # A window this short cannot fill a 4096-trajectory buffer, and
+        # ReplayBuffer.sample() silently returns fewer than batch_trajectories
+        # when it is under-filled -- cheaper, faster steps, so steps_per_s comes
+        # out inflated and fresh_per_step deflated. Flag it rather than pretend.
+        "buffer_avg": round(buf_sum / q_samples, 1) if q_samples else 0.0,
+        "buffer_min": 0 if buf_min == float("inf") else int(buf_min),
+        "batch_starved": bool(q_samples and buf_min < cfg.train.batch_trajectories),
     }
+
+
+# -- off-policy metrics -------------------------------------------------------
+# Throughput alone is the wrong objective once the actors out-run the learner:
+# the surplus does not train the net faster, it makes the net's data *fresher*.
+# Both quantities below are linear in actor throughput, which is what makes the
+# actor knobs worth tuning even on a run whose buffer is permanently full.
+#
+#   horizon_steps -- learner steps of policy drift spanned by the buffer,
+#                    buffer_capacity / fresh_per_step. The oldest trajectory the
+#                    learner samples was generated by a policy this many steps
+#                    behind the current one; it is the off-policy distance
+#                    v-trace has to correct for.
+#   reuse         -- expected times a trajectory is sampled before it is evicted,
+#                    (batch_trajectories * steps/s) / trajectories/s.
+#
+# ``buffer_capacity`` is the *other* lever on horizon_steps and costs no cores at
+# all -- shrinking it tightens the horizon but also narrows data diversity, so
+# the sweep exposes both axes rather than assuming which one you want to spend.
+def _horizon(cfg: Config, fresh_per_step: float) -> float:
+    if fresh_per_step <= 0:
+        return float("inf")
+    return cfg.train.buffer_capacity / fresh_per_step
+
+
+def _reuse(cfg: Config, steps_per_s: float, traj_per_s: float) -> float:
+    if traj_per_s <= 0:
+        return float("inf")
+    return cfg.train.batch_trajectories * steps_per_s / traj_per_s
 
 
 def _qsize(q) -> int:
@@ -261,56 +348,130 @@ def default_counts(max_actors: int) -> List[int]:
     return sorted(c for c in pts if 1 <= c <= max_actors)
 
 
-def recommend(rows: List[Dict[str, float]], fresh_target: float) -> Dict:
-    """Choose the smallest actor count that keeps the buffer fresh without
-    saturating the trajectory queue, using the real combined-loop timings.
+def _cost(row: Dict[str, float]) -> tuple:
+    """Machine cost of a config: actor processes first (that is what eats cores),
+    then total concurrent games (memory and queue churn)."""
+    return (row["actors"], row["concurrent_games"])
 
-    Signals (all from a real training window):
-      * data_wait_frac high or queue chronically empty -> actor-bound: the GPU
-        is waiting on the CPU, more actors help.
-      * fresh_per_step >= target and queue not saturated -> enough actors; the
-        smallest such count wins (extra cores would just be dropped games).
-      * queue saturated (q_occ_max ~ 1) -> over-provisioned at that count.
+
+def recommend(rows: List[Dict[str, float]], fresh_target: float,
+              horizon_target: Optional[float] = None) -> Dict:
+    """Pick the cheapest actor config that hits the data-quality targets.
+
+    Two different objectives live here, and which one applies depends on whether
+    the actors can out-run the learner:
+
+    * **Actor-bound** (nothing reaches ``fresh_target``): the GPU is idling on
+      data. Throughput is the objective -- take the knee of the freshness curve,
+      past which more cores stop buying trajectories.
+
+    * **Learner-bound** (the usual case here): the buffer is permanently full and
+      extra trajectories do not make the learner step faster. What they *do* buy
+      is a shorter off-policy horizon -- ``buffer_capacity / fresh_per_step``
+      learner steps of policy drift across the buffer, linear in actor
+      throughput. So the objective becomes: hit ``horizon_target`` at the lowest
+      core cost. Without a horizon target this degrades to the old behavior
+      (cheapest config that merely keeps up), which spends the surplus on
+      nothing -- pass ``--max-horizon`` when data freshness is what you care about.
     """
-    rows = sorted(rows, key=lambda r: r["actors"])
+    rows = sorted(rows, key=_cost)
     best_fresh = max(rows, key=lambda r: r["fresh_per_step"])
 
-    # "enough" = refreshes the buffer at the target rate AND isn't already
-    # saturating the queue (which would mean actors are dropping trajectories).
-    enough = [r for r in rows
-              if r["fresh_per_step"] >= fresh_target and r["q_occ_max"] < 0.95]
+    def viable(r):
+        if r.get("batch_starved"):
+            return False  # steps_per_s inflated by short batches; row is not comparable
+        if r["fresh_per_step"] < fresh_target or r["q_occ_max"] >= 0.95:
+            return False
+        return horizon_target is None or r["horizon_steps"] <= horizon_target
+
+    enough = [r for r in rows if viable(r)]
     if enough:
-        choice = min(enough, key=lambda r: r["actors"])
+        choice = min(enough, key=_cost)
+        goal = (f"horizon {choice['horizon_steps']:.0f} <= {horizon_target:.0f} steps, "
+                if horizon_target is not None else "")
         return {
             "async_actors": choice["actors"],
+            "actor_games": choice["actor_games"],
             "reason": (
-                f"smallest actor count keeping the buffer fresh "
-                f"({choice['fresh_per_step']} fresh traj/step >= {fresh_target}) while the GPU "
-                f"runs {choice['steps_per_s']} steps/s at {choice['gpu_busy_frac']*100:.0f}% busy; "
-                f"queue peaks at {choice['q_occ_max']*100:.0f}% so actors aren't dropping games. "
-                f"More actors would mostly be idle/dropped cores."
+                f"cheapest config meeting the targets ({goal}"
+                f"{choice['fresh_per_step']} fresh traj/step >= {fresh_target}) at "
+                f"{choice['actors']} processes x {choice['actor_games']} games "
+                f"({choice['concurrent_games']} concurrent). Learner runs "
+                f"{choice['steps_per_s']} steps/s, {choice['gpu_busy_frac']*100:.0f}% GPU-busy, "
+                f"queue peaks at {choice['q_occ_max']*100:.0f}%; reuse {choice['reuse']}x."
             ),
             "actor_bound": False,
+            "horizon_steps": choice["horizon_steps"],
+            "reuse": choice["reuse"],
         }
 
-    # Nothing hits the freshness target -> actor-bound. Take the knee of the
-    # freshness curve (more cores still help until it flattens).
-    knee = rows[0]
-    for prev, cur in zip(rows, rows[1:]):
-        base = max(prev["fresh_per_step"], 1e-9)
-        if (cur["fresh_per_step"] - prev["fresh_per_step"]) / base < 0.08:
-            knee = prev
-            break
-        knee = cur
+    # Nothing meets the targets. If even freshness is unmet we are actor-bound;
+    # if only the horizon is unmet, more actors still help -- both point at the
+    # config with the most production, so report the best achievable.
+    unmet_fresh = best_fresh["fresh_per_step"] < fresh_target
+    best_horizon = min(rows, key=lambda r: r["horizon_steps"])
+    if unmet_fresh:
+        knee = rows[0]
+        by_actors = sorted(rows, key=lambda r: r["actors"])
+        for prev, cur in zip(by_actors, by_actors[1:]):
+            base = max(prev["fresh_per_step"], 1e-9)
+            if (cur["fresh_per_step"] - prev["fresh_per_step"]) / base < 0.08:
+                knee = prev
+                break
+            knee = cur
+        return {
+            "async_actors": knee["actors"],
+            "actor_games": knee["actor_games"],
+            "reason": (
+                f"actor-bound: even at {best_fresh['actors']}x{best_fresh['actor_games']} the buffer "
+                f"only refreshes {best_fresh['fresh_per_step']} fresh traj/step (< {fresh_target}) "
+                f"and the GPU waits {best_fresh['data_wait_frac']*100:.0f}% of the time on data; "
+                f"production is the limit, so use the knee at {knee['actors']}x{knee['actor_games']} "
+                f"(more cores barely help past here)."
+            ),
+            "actor_bound": True,
+            "horizon_steps": knee["horizon_steps"],
+            "reuse": knee["reuse"],
+        }
+    # Diagnose *why* nothing was viable before blaming the horizon: a pegged queue
+    # means traj_per_s measured the learner's drain rate, not actor production, so
+    # every derived number is a floor and the configs are not comparable at all.
+    saturated = [r for r in rows if r.get("q_occ_avg", 0.0) >= 0.95]
+    if len(saturated) == len(rows):
+        reason = (
+            f"UNUSABLE: the trajectory queue was saturated (avg occupancy >=95%) in all "
+            f"{len(rows)} configs, so actors were dropping games and traj/s measured the "
+            f"learner's drain rate, not actor production -- the configs are not comparable "
+            f"and every horizon/reuse figure is a floor. Raise train.traj_queue_size and "
+            f"train.drain_per_cycle, and lengthen --warmup/--measure so the loop reaches "
+            f"steady state, before reading anything off this grid."
+        )
+    elif horizon_target is not None:
+        suggested = int(best_horizon["buffer_capacity"] * horizon_target
+                        / max(best_horizon["horizon_steps"], 1e-9))
+        reason = (
+            f"no config reached the {horizon_target:.0f}-step horizon target; the best is "
+            f"{best_horizon['horizon_steps']:.0f} steps at "
+            f"{best_horizon['actors']}x{best_horizon['actor_games']} (reuse {best_horizon['reuse']}x). "
+            f"Actor throughput is one lever on the horizon; buffer_capacity is the other and "
+            f"costs no cores -- try --set train.buffer_capacity={suggested}."
+        )
+    else:
+        # freshness was met somewhere, so the exclusions were queue saturation or
+        # short-batch rows -- say so rather than implying an unreachable target
+        reason = (
+            f"every config was excluded as not measurable or over-provisioned "
+            f"(short batches / saturated queue); reporting the freshest, "
+            f"{best_horizon['actors']}x{best_horizon['actor_games']}. Re-run with a longer "
+            f"--warmup/--measure so the buffer clears batch_trajectories."
+        )
     return {
-        "async_actors": knee["actors"],
-        "reason": (
-            f"actor-bound: even at {best_fresh['actors']} actors the buffer only refreshes "
-            f"{best_fresh['fresh_per_step']} fresh traj/step (< {fresh_target}) and the GPU waits "
-            f"{best_fresh['data_wait_frac']*100:.0f}% of the time on data; production is the limit, "
-            f"so use the knee at {knee['actors']} actors (more cores barely help past here)."
-        ),
-        "actor_bound": True,
+        "async_actors": best_horizon["actors"],
+        "actor_games": best_horizon["actor_games"],
+        "reason": reason,
+        "actor_bound": False,
+        "horizon_steps": best_horizon["horizon_steps"],
+        "reuse": best_horizon["reuse"],
     }
 
 
@@ -339,12 +500,31 @@ def run_compare(cfg: Config, counts: List[int], warmup_s: float, measure_s: floa
     return {"cores": cores, "device": str(device), "rows": rows, "compare": True}
 
 
+def describe_config(cfg: Config) -> str:
+    """One line identifying what is actually being benchmarked."""
+    net = cfg.network
+    arch = net.arch
+    shape = (f"ch={net.channels} blocks={net.blocks} history={cfg.encoding.history}"
+             if arch == "resnet" else
+             f"enc={net.enc_blocks} mixer={net.mixer_dim}x{net.mixer_layers} heads={net.nhead}")
+    return (f"arch={arch} {shape} batch={cfg.train.batch_trajectories} "
+            f"buffer={cfg.train.buffer_capacity} amp={cfg.rnad.amp}")
+
+
 def run_bench(cfg: Config, counts: List[int], warmup_s: float, measure_s: float,
-              fresh_target: float) -> Dict:
+              fresh_target: float, games_counts: Optional[List[int]] = None,
+              horizon_target: Optional[float] = None,
+              weights: Optional[str] = None) -> Dict:
     cores = os.cpu_count() or 0
     device = resolve_device(cfg.train.device)
+    games_counts = games_counts or [max(1, cfg.train.actor_games)]
     print(f"[bench] cores={cores} learner_device={device} counts={counts} "
-          f"warmup={warmup_s}s measure={measure_s}s")
+          f"actor_games={games_counts} warmup={warmup_s}s measure={measure_s}s")
+    print(f"[bench] config: {describe_config(cfg)}")
+    print(f"[bench] actor weights: {weights or 'RANDOM INIT (see warning below)'}")
+    if horizon_target is not None:
+        print(f"[bench] targets: fresh/step >= {fresh_target}, "
+              f"off-policy horizon <= {horizon_target:.0f} learner steps")
     if device.type != "cuda":
         print("[bench] WARNING: no CUDA device -> learner runs on CPU; absolute GPU "
               "timings will not reflect the L40S. Run this on the GPU server.")
@@ -353,49 +533,132 @@ def run_bench(cfg: Config, counts: List[int], warmup_s: float, measure_s: float,
               "as a saturated queue / no extra freshness).")
 
     rows: List[Dict[str, float]] = []
-    for c in counts:
-        print(f"[bench] running real training loop with {c} actors ...", flush=True)
-        row = measure_training(cfg, c, warmup_s, measure_s)
-        rows.append(row)
-        print(f"        steps/s={row['steps_per_s']}  gpu_step={row['gpu_step_ms']}ms "
-              f"({row['gpu_busy_frac']*100:.0f}% busy, {row['data_wait_frac']*100:.0f}% waiting on data)  "
-              f"host={row['host_ms']}ms/step  fresh/step={row['fresh_per_step']}  "
-              f"queue avg/max={row['q_occ_avg']*100:.0f}/{row['q_occ_max']*100:.0f}%")
-        if row["learner_steps"] == 0:
-            print("        !! no learner steps in the window; raise --measure or --warmup")
+    for games in games_counts:
+        cfg.train.actor_games = games
+        for c in counts:
+            print(f"[bench] running real training loop with {c} actors "
+                  f"x {games} games ...", flush=True)
+            row = measure_training(cfg, c, warmup_s, measure_s, weights=weights)
+            rows.append(row)
+            print(f"        steps/s={row['steps_per_s']}  gpu_step={row['gpu_step_ms']}ms "
+                  f"({row['gpu_busy_frac']*100:.0f}% busy, {row['data_wait_frac']*100:.0f}% waiting on data)  "
+                  f"host={row['host_ms']}ms/step  traj/s={row['traj_per_s']}  "
+                  f"fresh/step={row['fresh_per_step']}  horizon={row['horizon_steps']:.0f} steps  "
+                  f"reuse={row['reuse']}x  "
+                  f"queue avg/max={row['q_occ_avg']*100:.0f}/{row['q_occ_max']*100:.0f}%")
+            if row["learner_steps"] == 0:
+                print("        !! no learner steps in the window; raise --measure or --warmup")
 
-    rec = recommend(rows, fresh_target)
-    return {"cores": cores, "device": str(device), "rows": rows, "recommendation": rec}
+    print_grid(rows, cores)
+    rec = recommend(rows, fresh_target, horizon_target)
+    return {"cores": cores, "device": str(device), "rows": rows,
+            "config": describe_config(cfg), "recommendation": rec}
+
+
+def print_grid(rows: List[Dict[str, float]], cores: int) -> None:
+    """The whole grid in one table, so the trade-off is visible, not just the pick."""
+    print(f"\n=== grid ({len(rows)} configs) ===")
+    print(f"{'actors':>6} {'games':>6} {'conc':>5} {'cores%':>7} {'steps/s':>8} "
+          f"{'traj/s':>8} {'fresh':>7} {'horizon':>8} {'reuse':>6} {'gpu%':>5} "
+          f"{'wait%':>6} {'queue%':>7} {'buf':>7}  verdict")
+    starved = 0
+    for r in sorted(rows, key=_cost):
+        pct = 100 * r["actors"] / cores if cores else float("nan")
+        if r.get("batch_starved"):
+            verdict = "INVALID: buffer below batch size"
+            starved += 1
+        elif r["data_wait_frac"] > 0.25:
+            verdict = "actor-bound (GPU idle on data)"
+        elif r["q_occ_max"] >= 0.95:
+            verdict = "queue saturated (dropping games)"
+        elif r["fresh_per_step"] > 4:
+            verdict = "learner-bound (surplus -> freshness)"
+        else:
+            verdict = "balanced"
+        print(f"{r['actors']:>6} {r['actor_games']:>6} {r['concurrent_games']:>5} "
+              f"{pct:>6.0f}% {r['steps_per_s']:>8.2f} {r['traj_per_s']:>8.2f} "
+              f"{r['fresh_per_step']:>7.2f} {r['horizon_steps']:>8.0f} {r['reuse']:>5.1f}x "
+              f"{r['gpu_busy_frac']*100:>4.0f}% {r['data_wait_frac']*100:>5.0f}% "
+              f"{r['q_occ_max']*100:>6.0f}% {r.get('buffer_avg', 0):>7.0f}  {verdict}")
+
+    pegged = sum(1 for r in rows if r.get("q_occ_avg", 0.0) >= 0.95)
+    if pegged:
+        print(f"\n[bench] WARNING: {pegged}/{len(rows)} rows ran with the actor->learner "
+              f"queue saturated (avg occupancy >=95%). There, actors drop games on "
+              f"queue.Full and traj/s reflects the learner's DRAIN rate, not actor "
+              f"production -- those rows cannot be compared against each other. Raise "
+              f"train.traj_queue_size / train.drain_per_cycle and lengthen the window.")
+    if starved:
+        print(f"\n[bench] WARNING: {starved}/{len(rows)} rows ran with the buffer below "
+              f"batch_trajectories. ReplayBuffer.sample() returns short batches there, so "
+              f"their steps/s is inflated and fresh/step deflated -- excluded from the pick. "
+              f"Raise --warmup/--measure, or lower --set train.buffer_capacity, to fix.")
+    weights = {r.get("weights", "random-init") for r in rows}
+    if weights == {"random-init"}:
+        print("[bench] WARNING: actors played with RANDOM-INIT weights. Untrained agents do "
+              "not finish games (measured 135 decisions/trajectory at init vs 34.7 trained), "
+              "so traj/s is understated several-fold and every off-policy number with it. "
+              "Pass --version (auto-loads that run's latest checkpoint) for usable numbers.")
 
 
 # -- write the pick into config.py -------------------------------------------
-def apply_to_config(n_actors: int) -> str:
-    """Rewrite the ``async_actors`` default in config.py to ``n_actors`` in place.
+def apply_to_config(n_actors: int, n_games: int = 1) -> str:
+    """Rewrite the ``async_actors`` / ``actor_games`` defaults in config.py in place.
 
     Edits the source file the running package was imported from (via the module's
-    __file__), so it works regardless of CWD. Preserves the trailing comment.
-    Returns the path written. Raises if the field can't be found unambiguously.
+    __file__), so it works regardless of CWD. Preserves the trailing comments.
+    Returns the path written. Raises if a field can't be found unambiguously,
+    leaving the file untouched.
     """
     path = os.path.abspath(config_mod.__file__)
     with open(path) as f:
         src = f.read()
-    pat = re.compile(r"^(?P<pre>\s*async_actors:\s*int\s*=\s*)\d+(?P<post>.*)$", re.MULTILINE)
-    new_src, n = pat.subn(rf"\g<pre>{n_actors}\g<post>", src)
-    if n != 1:
-        raise RuntimeError(
-            f"expected exactly one 'async_actors: int = ...' in {path}, found {n}; "
-            f"not editing -- set --async-actors {n_actors} on the run instead"
-        )
+    for name, value in (("async_actors", n_actors), ("actor_games", n_games)):
+        pat = re.compile(rf"^(?P<pre>\s*{name}:\s*int\s*=\s*)\d+(?P<post>.*)$", re.MULTILINE)
+        src, n = pat.subn(rf"\g<pre>{value}\g<post>", src)
+        if n != 1:
+            raise RuntimeError(
+                f"expected exactly one '{name}: int = ...' in {path}, found {n}; "
+                f"not editing -- pass --async-actors {n_actors} --actor-games {n_games} "
+                f"on the run instead"
+            )
     with open(path, "w") as f:
-        f.write(new_src)
+        f.write(src)
     return path
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="deepnash-bench",
-        description="Benchmark the real async training loop (GPU + actors) and recommend async_actors.",
+        description="Benchmark the real async training loop (GPU + actors) and recommend "
+                    "async_actors / actor_games for a given run config.",
+        epilog="Tune the config a run actually uses, e.g.:\n"
+               "  deepnash-bench --version 0.59.0 --counts 8,16,30,48 --actor-games 1,2,4 "
+               "--max-horizon 150\n"
+               "Benchmarking without --version/--config measures the library defaults, "
+               "which are almost certainly not your run.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    p.add_argument("--version", default=None,
+                   help="Benchmark the config of an existing run, read from "
+                        "<checkpoint-dir>/v<VERSION>/config.json (e.g. --version 0.59.0). "
+                        "Without this the library defaults are measured, which usually "
+                        "means a different architecture than the run you care about.")
+    p.add_argument("--config", default=None,
+                   help="Path to a config.json manifest to benchmark (alternative to --version).")
+    p.add_argument("--checkpoint-dir", default="checkpoints",
+                   help="Where to look for v<VERSION>/config.json (default: checkpoints).")
+    p.add_argument("--weights", default="auto",
+                   help="Weights the bench actors play with: 'auto' (default) loads that "
+                        "version's latest checkpoint when --version is given, a path loads "
+                        "that checkpoint, 'none' uses random init. Game length depends "
+                        "strongly on policy strength (135 decisions/trajectory at init vs "
+                        "34.7 trained on v0.43.0), so random init understates actor "
+                        "throughput several-fold and corrupts every off-policy number.")
+    p.add_argument("--set", dest="overrides", action="append", default=[], metavar="PATH=VALUE",
+                   help="Override any config field by dotted path after loading, e.g. "
+                        "--set train.buffer_capacity=2048. Repeatable. Useful for sweeping "
+                        "the non-actor lever on the off-policy horizon.")
     p.add_argument("--counts", default=None,
                    help="Comma-separated actor counts to test (default: ladder up to core count).")
     p.add_argument("--max-actors", type=int, default=None,
@@ -406,23 +669,80 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--measure", type=float, default=25.0,
                    help="Measurement-window seconds per count (default: 25). Raise if games are long.")
     p.add_argument("--fresh-per-step", type=float, default=1.0,
-                   help="Target fresh trajectories added to the buffer per GPU step; the pick is the "
-                        "smallest actor count meeting it (default: 1.0).")
+                   help="Minimum fresh trajectories added to the buffer per learner step "
+                        "(default: 1.0). Below this the GPU is starved.")
+    p.add_argument("--max-horizon", type=float, default=None,
+                   help="Target off-policy horizon in LEARNER STEPS: buffer_capacity / "
+                        "fresh_per_step, i.e. how far the policy drifts across the buffer. "
+                        "Set this when data freshness (not just keeping the GPU fed) is what "
+                        "you are buying with cores -- the pick becomes the cheapest config "
+                        "reaching it. Without it, surplus actor throughput is treated as waste.")
+    p.add_argument("--actor-games", default=None,
+                   help="Comma-separated concurrent-games-per-actor values to sweep "
+                        "(TrainConfig.actor_games; default: just the config value). "
+                        "Total concurrent games is actors x games, so e.g. "
+                        "--counts 16,30 --actor-games 1,4,8 explores the whole grid.")
     p.add_argument("--device", default=None, help="Learner device override (cuda/cpu).")
     p.add_argument("--json", default=None, help="Write the full report to this path.")
     p.add_argument("--apply", action="store_true",
-                   help="Rewrite the async_actors default in config.py to the recommendation.")
+                   help="Rewrite the async_actors and actor_games defaults in config.py to "
+                        "the recommendation.")
     p.add_argument("--compare", action="store_true",
                    help="A/B the legacy vs fast (vectorized) learner step at each count "
                         "and report the throughput speedup, instead of tuning actors.")
     return p
 
 
-def main(argv: Optional[List[str]] = None) -> None:
-    args = build_parser().parse_args(argv)
-    cfg = Config()
+def load_bench_config(args) -> Config:
+    """Build the Config to benchmark: a run's manifest if given, else defaults."""
+    if args.config and args.version:
+        raise SystemExit("pass --config or --version, not both")
+    if args.config:
+        with open(args.config) as f:
+            cfg = config_from_dict(json.load(f))
+        print(f"[bench] loaded config from {args.config}")
+    elif args.version:
+        data = read_version_config(args.checkpoint_dir, args.version)
+        if data is None:
+            raise SystemExit(
+                f"no config.json for version {args.version} under {args.checkpoint_dir}/; "
+                f"available: {', '.join(existing_versions(args.checkpoint_dir)) or 'none'}"
+            )
+        cfg = config_from_dict(data)
+        print(f"[bench] loaded config for v{args.version}")
+    else:
+        cfg = Config()
+        print("[bench] NOTE: benchmarking library defaults -- pass --version/--config to "
+              "measure the model your run actually trains.")
+    if args.overrides:
+        _apply_overrides(cfg, args.overrides)
+        print(f"[bench] overrides: {', '.join(args.overrides)}")
     if args.device is not None:
         cfg.train.device = args.device
+    return cfg
+
+
+def resolve_weights(args) -> Optional[str]:
+    """Which checkpoint the bench actors should play with (see load_actor_weights)."""
+    choice = (args.weights or "auto").strip()
+    if choice.lower() in {"none", "random", "init"}:
+        return None
+    if choice.lower() != "auto":
+        if not os.path.exists(choice):
+            raise SystemExit(f"--weights: no such checkpoint {choice}")
+        return choice
+    if not args.version:
+        return None  # nothing to auto-resolve against
+    path = find_latest_checkpoint(args.checkpoint_dir, version=args.version)
+    if path is None:
+        print(f"[bench] --weights auto: no checkpoint under {args.checkpoint_dir}/"
+              f"v{args.version}/; falling back to random init")
+    return path
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    args = build_parser().parse_args(argv)
+    cfg = load_bench_config(args)
 
     if args.counts:
         counts = sorted({int(x) for x in args.counts.split(",") if x.strip()})
@@ -437,18 +757,31 @@ def main(argv: Optional[List[str]] = None) -> None:
             print(f"[bench] wrote {args.json}")
         return
 
-    report = run_bench(cfg, counts, args.warmup, args.measure, args.fresh_per_step)
+    games_counts = (
+        sorted({int(x) for x in args.actor_games.split(",") if x.strip()})
+        if args.actor_games else None
+    )
+    report = run_bench(cfg, counts, args.warmup, args.measure, args.fresh_per_step,
+                       games_counts, args.max_horizon, resolve_weights(args))
 
     rec = report["recommendation"]
     print("\n=== recommendation ===")
-    print(f"  async_actors = {rec['async_actors']}")
+    print(f"  async_actors = {rec['async_actors']}   actor_games = {rec['actor_games']}")
+    print(f"  off-policy horizon = {rec['horizon_steps']:.0f} learner steps, "
+          f"reuse = {rec['reuse']}x")
     print(f"  why: {rec['reason']}")
-    print(f"  run: uv run deepnash-train-async --async-actors {rec['async_actors']}")
+    print(f"  run: uv run deepnash-train-async --async-actors {rec['async_actors']} "
+          f"--actor-games {rec['actor_games']}")
+    if args.max_horizon is None:
+        print("  note: no --max-horizon given, so surplus actor throughput counted as "
+              "waste. If shorter off-policy horizon is what you want the cores for, "
+              "re-run with --max-horizon <steps>.")
 
     if args.apply:
-        old = Config().train.async_actors
-        path = apply_to_config(rec["async_actors"])
-        print(f"[bench] set async_actors {old} -> {rec['async_actors']} in {path}")
+        old = Config().train
+        path = apply_to_config(rec["async_actors"], rec["actor_games"])
+        print(f"[bench] set async_actors {old.async_actors} -> {rec['async_actors']}, "
+              f"actor_games {old.actor_games} -> {rec['actor_games']} in {path}")
 
     if args.json:
         with open(args.json, "w") as f:
