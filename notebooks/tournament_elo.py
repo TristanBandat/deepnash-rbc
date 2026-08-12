@@ -198,14 +198,19 @@ def _():
     #              lr2.5e-5, lr1.4e-4)
     #     B<n>     learner batch trajectories (baseline 32)
     #     greedy   argmax self-play        (baseline = sampled)
+    #     it<n>    R-NaD iteration length  (baseline 1000; it500, it2k)
+    #     cos/wsd  learning-rate schedule  (baseline constant, untagged)
     #     d<n>     mixer width    (sequence only, baseline 128)
     #     L<n>     mixer layers   (sequence only, baseline 2)
     #     h<n>     attention heads (transformer/xlstm only, baseline 4; the
     #              gru/lstm mixers ignore nhead, so it is never tagged there)
     #     e<n>     encoder blocks (sequence only, baseline 4)
+    #     mLSTM / sLSTM<n>  xLSTM block variant (baseline = sLSTM at [1])
     #
-    # Genuine re-runs that share an identical config+seed get the bare version
-    # appended so aliases stay unique, e.g. "CNN·η0.5·s0 (v0.14.0)".
+    # Genuine re-runs that share an identical config+seed are numbered in
+    # release order: the earliest keeps the clean alias, later ones append
+    # ·r2, ·r3, ... ("r" for re-run; "v" would collide with the ladder
+    # deployment versions V1-V6).
     #
     # To hand-name a run, add "version": "my name" to ALIAS_OVERRIDE below; that
     # string is used verbatim and wins over the auto scheme.
@@ -243,6 +248,13 @@ def _():
             tags.append(f"b{net.get('blocks')}")
         if rnad.get("lr") != 5e-5:
             tags.append(lr_tag(rnad.get("lr")))
+        if rnad.get("iteration_steps", 1000) != 1000:
+            its = rnad["iteration_steps"]
+            tags.append(f"it{its // 1000}k" if its % 1000 == 0 else f"it{its}")
+        if rnad.get("lr_schedule", "constant") not in ("constant", None):
+            tags.append(
+                {"cosine": "cos"}.get(rnad["lr_schedule"], rnad["lr_schedule"])
+            )
         # Batch is normalised out of the x-axis (see BATCH_REF), but it still is a
         # config deviation, so surface it in the name.
         if train.get("batch_trajectories", 32) != 32:
@@ -261,6 +273,13 @@ def _():
                 tags.append(f"h{net.get('nhead')}")
             if net.get("enc_blocks") not in (4, None):
                 tags.append(f"e{net.get('enc_blocks')}")
+            if net.get("arch") == "xlstm":
+                # Block variant: baseline is sLSTM at block 1 of two ([1]).
+                at = net.get("xlstm_slstm_at", [1])
+                if at == []:
+                    tags.append("mLSTM")
+                elif at != [1]:
+                    tags.append(f"sLSTM{len(at)}")
         return fam + ("·" + "·".join(tags) if tags else "")
 
     return ALIAS_OVERRIDE, core_alias
@@ -354,22 +373,18 @@ def _(ALIAS_OVERRIDE, ckpt_input, core_alias, json, pl):
                 }
             )
 
-        # Per-version alias: "<core>·s<seed>", uniquified by appending the bare
-        # version when two genuine re-runs share config+seed; overrides win.
-        from collections import Counter as _Counter
-
-        _auto = {
-            r["version"]: f"{r['core']}·s{r['seed']}"
-            for r in recs if r["version"] not in ALIAS_OVERRIDE
-        }
-        _clash = _Counter(_auto.values())
-        for r in recs:
-            v = r["version"]
+        # Per-version alias: "<core>·s<seed>". Re-runs sharing config+seed are
+        # numbered in release order (earliest clean, then ·r2, ·r3, ...);
+        # overrides win but still occupy their group's release-order slot.
+        _auto = {r["version"]: f"{r['core']}·s{r['seed']}" for r in recs}
+        _seen: dict[str, int] = {}
+        for r in sorted(recs, key=lambda r: r["vsort"]):
+            v, base = r["version"], _auto[r["version"]]
+            _seen[base] = _seen.get(base, 0) + 1
             if v in ALIAS_OVERRIDE:
                 r["alias"] = ALIAS_OVERRIDE[v]
             else:
-                base = _auto[v]
-                r["alias"] = base if _clash[base] == 1 else f"{base} ({v})"
+                r["alias"] = base if _seen[base] == 1 else f"{base}·r{_seen[base]}"
 
         df = pl.DataFrame(recs)
 
