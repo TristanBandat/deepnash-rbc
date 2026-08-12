@@ -1,0 +1,1809 @@
+{
+ "meta": {
+  "label": "v0.14.0_70000_self",
+  "checkpoint": "checkpoints/v0.14.0/deepnash_async_v0.14.0_70000.pt",
+  "run": "v0.14.0_70000",
+  "opponent": "self",
+  "games": 1000,
+  "sample": true,
+  "seed": 0,
+  "arch": "DeepNashNet",
+  "history": 16,
+  "device": "cuda",
+  "seconds": 53.8
+ },
+ "n_decisions": 38406,
+ "n_games": 1000,
+ "entropy_bits_mean": 5.8059139100435875,
+ "entropy_bits_std": 0.06303345751067449,
+ "entropy_bits_pooled": 5.924536391406101,
+ "entropy_bits_uniform": 6.0,
+ "state_dependence_bits": 0.11862248136251363,
+ "effective_support_mean": 55.99666975214409,
+ "top1_mass_mean": 0.04278709045792465,
+ "top5_mass_mean": 0.17416338888270746,
+ "squares_for_half_mass": 20,
+ "squares_for_90_mass": 50,
+ "opp_half_mass_mean": 0.5387033408824663,
+ "border_mass_mean": 0.4933079578533654,
+ "border_mass_uniform": 0.4375,
+ "expected_revealed_mean": 7.390456991960644,
+ "expected_revealed_uniform": 7.5625,
+ "argmax_agreement": 0.04395146591678384,
+ "per_ordinal": [
+  {
+   "ordinal": 1,
+   "color": "white",
+   "n": 1000,
+   "entropy_bits": 5.798066055218409,
+   "opp_half_mass": 0.4774726468604058,
+   "border_mass": 0.40343227656558156
+  },
+  {
+   "ordinal": 1,
+   "color": "black",
+   "n": 1000,
+   "entropy_bits": 5.593872304676068,
+   "opp_half_mass": 0.7331369388848543,
+   "border_mass": 0.5775194303132594
+  },
+  {
+   "ordinal": 2,
+   "color": "white",
+   "n": 1000,
+   "entropy_bits": 5.802828971480729,
+   "opp_half_mass": 0.41885238434828354,
+   "border_mass": 0.4617670795456506
+  },
+  {
+   "ordinal": 2,
+   "color": "black",
+   "n": 1000,
+   "entropy_bits": 5.736061484814776,
+   "opp_half_mass": 0.6550993570347782,
+   "border_mass": 0.5690574162236881
+  },
+  {
+   "ordinal": 3,
+   "color": "white",
+   "n": 1000,
+   "entropy_bits": 5.813431559985449,
+   "opp_half_mass": 0.4278034598514787,
+   "border_mass": 0.4869957808507606
+  },
+  {
+   "ordinal": 3,
+   "color": "black",
+   "n": 993,
+   "entropy_bits": 5.746102303454642,
+   "opp_half_mass": 0.6525879307276751,
+   "border_mass": 0.5635384506222858
+  },
+  {
+   "ordinal": 4,
+   "color": "white",
+   "n": 993,
+   "entropy_bits": 5.849484965450762,
+   "opp_half_mass": 0.44618292014613514,
+   "border_mass": 0.4963102757082905
+  },
+  {
+   "ordinal": 4,
+   "color": "black",
+   "n": 963,
+   "entropy_bits": 5.752014679253572,
+   "opp_half_mass": 0.6514686632612265,
+   "border_mass": 0.5461205278730227
+  },
+  {
+   "ordinal": 5,
+   "color": "white",
+   "n": 963,
+   "entropy_bits": 5.85259049384324,
+   "opp_half_mass": 0.44900303346020054,
+   "border_mass": 0.5001094109211446
+  },
+  {
+   "ordinal": 5,
+   "color": "black",
+   "n": 954,
+   "entropy_bits": 5.766623156078547,
+   "opp_half_mass": 0.6402640233678593,
+   "border_mass": 0.5260131618181786
+  },
+  {
+   "ordinal": 6,
+   "color": "white",
+   "n": 950,
+   "entropy_bits": 5.826101848463794,
+   "opp_half_mass": 0.4640125163777511,
+   "border_mass": 0.5298265219327847
+  },
+  {
+   "ordinal": 6,
+   "color": "black",
+   "n": 940,
+   "entropy_bits": 5.784880233441105,
+   "opp_half_mass": 0.6001564949059839,
+   "border_mass": 0.5124046104454851
+  },
+  {
+   "ordinal": 7,
+   "color": "white",
+   "n": 914,
+   "entropy_bits": 5.826531161197711,
+   "opp_half_mass": 0.47760217739489486,
+   "border_mass": 0.5211252354063028
+  },
+  {
+   "ordinal": 7,
+   "color": "black",
+   "n": 897,
+   "entropy_bits": 5.764519363412742,
+   "opp_half_mass": 0.6031865726009379,
+   "border_mass": 0.5194128754737173
+  },
+  {
+   "ordinal": 8,
+   "color": "white",
+   "n": 857,
+   "entropy_bits": 5.8304807758407975,
+   "opp_half_mass": 0.48704472051994807,
+   "border_mass": 0.5228177378442608
+  },
+  {
+   "ordinal": 8,
+   "color": "black",
+   "n": 841,
+   "entropy_bits": 5.7748571081283835,
+   "opp_half_mass": 0.5920675116737609,
+   "border_mass": 0.5110602032187794
+  },
+  {
+   "ordinal": 9,
+   "color": "white",
+   "n": 802,
+   "entropy_bits": 5.830450807318168,
+   "opp_half_mass": 0.48834712234380284,
+   "border_mass": 0.5198129531396135
+  },
+  {
+   "ordinal": 9,
+   "color": "black",
+   "n": 786,
+   "entropy_bits": 5.781038429085817,
+   "opp_half_mass": 0.5882611474821773,
+   "border_mass": 0.5131017716759081
+  },
+  {
+   "ordinal": 10,
+   "color": "white",
+   "n": 743,
+   "entropy_bits": 5.836027077538586,
+   "opp_half_mass": 0.4981003880765901,
+   "border_mass": 0.5004118456399321
+  },
+  {
+   "ordinal": 10,
+   "color": "black",
+   "n": 720,
+   "entropy_bits": 5.77478928874489,
+   "opp_half_mass": 0.5950965722304924,
+   "border_mass": 0.5092911274198235
+  },
+  {
+   "ordinal": 11,
+   "color": "white",
+   "n": 680,
+   "entropy_bits": 5.830364405219122,
+   "opp_half_mass": 0.4957867347136284,
+   "border_mass": 0.49757335348061615
+  },
+  {
+   "ordinal": 11,
+   "color": "black",
+   "n": 655,
+   "entropy_bits": 5.783391119561737,
+   "opp_half_mass": 0.5932320942839195,
+   "border_mass": 0.5043438624812802
+  },
+  {
+   "ordinal": 12,
+   "color": "white",
+   "n": 620,
+   "entropy_bits": 5.823535690480421,
+   "opp_half_mass": 0.4929275713939851,
+   "border_mass": 0.4863370689022685
+  },
+  {
+   "ordinal": 12,
+   "color": "black",
+   "n": 596,
+   "entropy_bits": 5.793177388605777,
+   "opp_half_mass": 0.5915034150055473,
+   "border_mass": 0.49586594800426526
+  },
+  {
+   "ordinal": 13,
+   "color": "white",
+   "n": 564,
+   "entropy_bits": 5.827530218132535,
+   "opp_half_mass": 0.4962389888888983,
+   "border_mass": 0.47370850834590944
+  },
+  {
+   "ordinal": 13,
+   "color": "black",
+   "n": 540,
+   "entropy_bits": 5.792573306366758,
+   "opp_half_mass": 0.5944987901794742,
+   "border_mass": 0.49630002705854603
+  },
+  {
+   "ordinal": 14,
+   "color": "white",
+   "n": 518,
+   "entropy_bits": 5.8274372606865334,
+   "opp_half_mass": 0.49537587795913596,
+   "border_mass": 0.47189125216082384
+  },
+  {
+   "ordinal": 14,
+   "color": "black",
+   "n": 492,
+   "entropy_bits": 5.7913449224173865,
+   "opp_half_mass": 0.5883445574213917,
+   "border_mass": 0.49246878630095503
+  },
+  {
+   "ordinal": 15,
+   "color": "white",
+   "n": 473,
+   "entropy_bits": 5.831563133517124,
+   "opp_half_mass": 0.49036826088485047,
+   "border_mass": 0.46648310608305354
+  },
+  {
+   "ordinal": 15,
+   "color": "black",
+   "n": 448,
+   "entropy_bits": 5.797963508026899,
+   "opp_half_mass": 0.585156841782009,
+   "border_mass": 0.4873943526300926
+  },
+  {
+   "ordinal": 16,
+   "color": "white",
+   "n": 428,
+   "entropy_bits": 5.8353047196243795,
+   "opp_half_mass": 0.4957799949513522,
+   "border_mass": 0.4526602863073001
+  },
+  {
+   "ordinal": 16,
+   "color": "black",
+   "n": 416,
+   "entropy_bits": 5.801728405373589,
+   "opp_half_mass": 0.5809485020321378,
+   "border_mass": 0.48014685995076434
+  },
+  {
+   "ordinal": 17,
+   "color": "white",
+   "n": 400,
+   "entropy_bits": 5.841702490786687,
+   "opp_half_mass": 0.49689270096539984,
+   "border_mass": 0.4492403469988494
+  },
+  {
+   "ordinal": 17,
+   "color": "black",
+   "n": 383,
+   "entropy_bits": 5.804496321972623,
+   "opp_half_mass": 0.5740955032717665,
+   "border_mass": 0.4770189013749157
+  },
+  {
+   "ordinal": 18,
+   "color": "white",
+   "n": 369,
+   "entropy_bits": 5.8380560391611676,
+   "opp_half_mass": 0.4981543598428424,
+   "border_mass": 0.4556255137145918
+  },
+  {
+   "ordinal": 18,
+   "color": "black",
+   "n": 361,
+   "entropy_bits": 5.8117553871859,
+   "opp_half_mass": 0.570094025025655,
+   "border_mass": 0.47566091347262623
+  },
+  {
+   "ordinal": 19,
+   "color": "white",
+   "n": 348,
+   "entropy_bits": 5.8357830530913875,
+   "opp_half_mass": 0.4944382587420331,
+   "border_mass": 0.4544616359541589
+  },
+  {
+   "ordinal": 19,
+   "color": "black",
+   "n": 337,
+   "entropy_bits": 5.8148983859531995,
+   "opp_half_mass": 0.5688548798887723,
+   "border_mass": 0.47116856529890044
+  },
+  {
+   "ordinal": 20,
+   "color": "white",
+   "n": 322,
+   "entropy_bits": 5.8332339084824305,
+   "opp_half_mass": 0.49649521775119965,
+   "border_mass": 0.45401339366763066
+  },
+  {
+   "ordinal": 20,
+   "color": "black",
+   "n": 310,
+   "entropy_bits": 5.813941017741168,
+   "opp_half_mass": 0.5641416804639683,
+   "border_mass": 0.47165261548004983
+  },
+  {
+   "ordinal": 21,
+   "color": "white",
+   "n": 302,
+   "entropy_bits": 5.831577998318012,
+   "opp_half_mass": 0.49197389685975956,
+   "border_mass": 0.45578576149326433
+  },
+  {
+   "ordinal": 21,
+   "color": "black",
+   "n": 292,
+   "entropy_bits": 5.820936448866629,
+   "opp_half_mass": 0.5645797799240913,
+   "border_mass": 0.46560910733557015
+  },
+  {
+   "ordinal": 22,
+   "color": "white",
+   "n": 281,
+   "entropy_bits": 5.835851915162362,
+   "opp_half_mass": 0.49495556850932554,
+   "border_mass": 0.4560322735907702
+  },
+  {
+   "ordinal": 22,
+   "color": "black",
+   "n": 271,
+   "entropy_bits": 5.819388300113923,
+   "opp_half_mass": 0.5619747206599648,
+   "border_mass": 0.4683383785285282
+  },
+  {
+   "ordinal": 23,
+   "color": "white",
+   "n": 264,
+   "entropy_bits": 5.838341617215419,
+   "opp_half_mass": 0.49218165089780197,
+   "border_mass": 0.4566265099733066
+  },
+  {
+   "ordinal": 23,
+   "color": "black",
+   "n": 252,
+   "entropy_bits": 5.8183457653152235,
+   "opp_half_mass": 0.5610104614738486,
+   "border_mass": 0.46968221963782397
+  },
+  {
+   "ordinal": 24,
+   "color": "white",
+   "n": 240,
+   "entropy_bits": 5.83600998207417,
+   "opp_half_mass": 0.4932127070147544,
+   "border_mass": 0.4568719723785762
+  },
+  {
+   "ordinal": 24,
+   "color": "black",
+   "n": 233,
+   "entropy_bits": 5.817207839597386,
+   "opp_half_mass": 0.5616351007713732,
+   "border_mass": 0.46573190998871583
+  },
+  {
+   "ordinal": 25,
+   "color": "white",
+   "n": 229,
+   "entropy_bits": 5.84140024005817,
+   "opp_half_mass": 0.49161451276011486,
+   "border_mass": 0.45601412129189867
+  },
+  {
+   "ordinal": 25,
+   "color": "black",
+   "n": 220,
+   "entropy_bits": 5.816987601292295,
+   "opp_half_mass": 0.562715605531544,
+   "border_mass": 0.4706833490130851
+  },
+  {
+   "ordinal": 26,
+   "color": "white",
+   "n": 216,
+   "entropy_bits": 5.839789808310826,
+   "opp_half_mass": 0.49372244746309996,
+   "border_mass": 0.45890498911224614
+  },
+  {
+   "ordinal": 26,
+   "color": "black",
+   "n": 208,
+   "entropy_bits": 5.817698441055508,
+   "opp_half_mass": 0.5580619863075509,
+   "border_mass": 0.4699204855628173
+  },
+  {
+   "ordinal": 27,
+   "color": "white",
+   "n": 201,
+   "entropy_bits": 5.836641712483673,
+   "opp_half_mass": 0.49466873801473193,
+   "border_mass": 0.46158546014846447
+  },
+  {
+   "ordinal": 27,
+   "color": "black",
+   "n": 196,
+   "entropy_bits": 5.816656863866463,
+   "opp_half_mass": 0.5579874195355675,
+   "border_mass": 0.4687412939457893
+  },
+  {
+   "ordinal": 28,
+   "color": "white",
+   "n": 191,
+   "entropy_bits": 5.838538993302347,
+   "opp_half_mass": 0.4901288359734371,
+   "border_mass": 0.46204244191709576
+  },
+  {
+   "ordinal": 28,
+   "color": "black",
+   "n": 178,
+   "entropy_bits": 5.815970681512957,
+   "opp_half_mass": 0.5597714485052523,
+   "border_mass": 0.4689790887000782
+  },
+  {
+   "ordinal": 29,
+   "color": "white",
+   "n": 172,
+   "entropy_bits": 5.8381649675848,
+   "opp_half_mass": 0.4885238531413813,
+   "border_mass": 0.46119694517882065
+  },
+  {
+   "ordinal": 29,
+   "color": "black",
+   "n": 166,
+   "entropy_bits": 5.817646806176924,
+   "opp_half_mass": 0.557569566529233,
+   "border_mass": 0.4731626967199607
+  },
+  {
+   "ordinal": 30,
+   "color": "white",
+   "n": 163,
+   "entropy_bits": 5.836560732358761,
+   "opp_half_mass": 0.4929236095460086,
+   "border_mass": 0.4625276266482939
+  },
+  {
+   "ordinal": 30,
+   "color": "black",
+   "n": 160,
+   "entropy_bits": 5.82065569659937,
+   "opp_half_mass": 0.5550168979738374,
+   "border_mass": 0.47015337917764555
+  },
+  {
+   "ordinal": 31,
+   "color": "white",
+   "n": 155,
+   "entropy_bits": 5.837508608967315,
+   "opp_half_mass": 0.49567699801071635,
+   "border_mass": 0.46203640892560927
+  },
+  {
+   "ordinal": 31,
+   "color": "black",
+   "n": 152,
+   "entropy_bits": 5.818024179105142,
+   "opp_half_mass": 0.5555875207416983,
+   "border_mass": 0.4685599891626656
+  },
+  {
+   "ordinal": 32,
+   "color": "white",
+   "n": 150,
+   "entropy_bits": 5.8333713611671705,
+   "opp_half_mass": 0.49624644766173637,
+   "border_mass": 0.4643175437937801
+  },
+  {
+   "ordinal": 32,
+   "color": "black",
+   "n": 148,
+   "entropy_bits": 5.81504860848618,
+   "opp_half_mass": 0.5583407078481065,
+   "border_mass": 0.47617395412305846
+  },
+  {
+   "ordinal": 33,
+   "color": "white",
+   "n": 146,
+   "entropy_bits": 5.830837247576047,
+   "opp_half_mass": 0.4986302951583639,
+   "border_mass": 0.466951855861786
+  },
+  {
+   "ordinal": 33,
+   "color": "black",
+   "n": 144,
+   "entropy_bits": 5.822795885341198,
+   "opp_half_mass": 0.5570394732260158,
+   "border_mass": 0.47500242752721533
+  },
+  {
+   "ordinal": 34,
+   "color": "white",
+   "n": 142,
+   "entropy_bits": 5.834317435700129,
+   "opp_half_mass": 0.4948604610399343,
+   "border_mass": 0.46843847113622117
+  },
+  {
+   "ordinal": 34,
+   "color": "black",
+   "n": 138,
+   "entropy_bits": 5.818085756703691,
+   "opp_half_mass": 0.5523873302677268,
+   "border_mass": 0.47771283670453407
+  },
+  {
+   "ordinal": 35,
+   "color": "white",
+   "n": 134,
+   "entropy_bits": 5.8352773806085905,
+   "opp_half_mass": 0.49280056763012936,
+   "border_mass": 0.46358075588698316
+  },
+  {
+   "ordinal": 35,
+   "color": "black",
+   "n": 130,
+   "entropy_bits": 5.821758971665877,
+   "opp_half_mass": 0.560877679510472,
+   "border_mass": 0.47373198983438597
+  },
+  {
+   "ordinal": 36,
+   "color": "white",
+   "n": 124,
+   "entropy_bits": 5.838278239471565,
+   "opp_half_mass": 0.49798246481898994,
+   "border_mass": 0.46126620362385085
+  },
+  {
+   "ordinal": 36,
+   "color": "black",
+   "n": 121,
+   "entropy_bits": 5.825446613762519,
+   "opp_half_mass": 0.5551694853246705,
+   "border_mass": 0.47679919034746776
+  },
+  {
+   "ordinal": 37,
+   "color": "white",
+   "n": 118,
+   "entropy_bits": 5.8355072125158225,
+   "opp_half_mass": 0.49841089192107,
+   "border_mass": 0.46692508378587033
+  },
+  {
+   "ordinal": 37,
+   "color": "black",
+   "n": 116,
+   "entropy_bits": 5.821194807700645,
+   "opp_half_mass": 0.5523541862514384,
+   "border_mass": 0.47465969808700753
+  },
+  {
+   "ordinal": 38,
+   "color": "white",
+   "n": 114,
+   "entropy_bits": 5.835934774539769,
+   "opp_half_mass": 0.49597118211616026,
+   "border_mass": 0.46645318922023044
+  },
+  {
+   "ordinal": 38,
+   "color": "black",
+   "n": 110,
+   "entropy_bits": 5.828377391688707,
+   "opp_half_mass": 0.553530118030242,
+   "border_mass": 0.4739844922695986
+  },
+  {
+   "ordinal": 39,
+   "color": "white",
+   "n": 107,
+   "entropy_bits": 5.833519190475379,
+   "opp_half_mass": 0.49297418179987085,
+   "border_mass": 0.46514173023724736
+  },
+  {
+   "ordinal": 39,
+   "color": "black",
+   "n": 107,
+   "entropy_bits": 5.827989081639465,
+   "opp_half_mass": 0.549754880122823,
+   "border_mass": 0.4753718349884621
+  },
+  {
+   "ordinal": 40,
+   "color": "white",
+   "n": 100,
+   "entropy_bits": 5.832467585962,
+   "opp_half_mass": 0.49202330874395556,
+   "border_mass": 0.47179944345494734
+  },
+  {
+   "ordinal": 40,
+   "color": "black",
+   "n": 95,
+   "entropy_bits": 5.828235316941469,
+   "opp_half_mass": 0.5585499299285738,
+   "border_mass": 0.473243494067145
+  },
+  {
+   "ordinal": 41,
+   "color": "white",
+   "n": 95,
+   "entropy_bits": 5.837776929783613,
+   "opp_half_mass": 0.49016422911204005,
+   "border_mass": 0.46521444495914405
+  },
+  {
+   "ordinal": 41,
+   "color": "black",
+   "n": 93,
+   "entropy_bits": 5.815658158119899,
+   "opp_half_mass": 0.5628325655600757,
+   "border_mass": 0.4821504780869951
+  },
+  {
+   "ordinal": 42,
+   "color": "white",
+   "n": 91,
+   "entropy_bits": 5.840148374871377,
+   "opp_half_mass": 0.49291112881082183,
+   "border_mass": 0.46814808911889544
+  },
+  {
+   "ordinal": 42,
+   "color": "black",
+   "n": 90,
+   "entropy_bits": 5.8256183043287715,
+   "opp_half_mass": 0.5503672638351822,
+   "border_mass": 0.479951483117313
+  },
+  {
+   "ordinal": 43,
+   "color": "white",
+   "n": 88,
+   "entropy_bits": 5.83904729452233,
+   "opp_half_mass": 0.49418930561990815,
+   "border_mass": 0.4711789600471754
+  },
+  {
+   "ordinal": 43,
+   "color": "black",
+   "n": 86,
+   "entropy_bits": 5.82190186918258,
+   "opp_half_mass": 0.5511724959414582,
+   "border_mass": 0.4824821428980592
+  },
+  {
+   "ordinal": 44,
+   "color": "white",
+   "n": 82,
+   "entropy_bits": 5.833709010899511,
+   "opp_half_mass": 0.49228965978723066,
+   "border_mass": 0.47368294795089194
+  },
+  {
+   "ordinal": 44,
+   "color": "black",
+   "n": 79,
+   "entropy_bits": 5.8305471765234165,
+   "opp_half_mass": 0.54819635726818,
+   "border_mass": 0.47725006373882106
+  },
+  {
+   "ordinal": 45,
+   "color": "white",
+   "n": 75,
+   "entropy_bits": 5.834620444338027,
+   "opp_half_mass": 0.4912173396193733,
+   "border_mass": 0.47465997681953015
+  },
+  {
+   "ordinal": 45,
+   "color": "black",
+   "n": 74,
+   "entropy_bits": 5.830843146674376,
+   "opp_half_mass": 0.5539831268361997,
+   "border_mass": 0.48001730444878843
+  },
+  {
+   "ordinal": 46,
+   "color": "white",
+   "n": 74,
+   "entropy_bits": 5.828373841477628,
+   "opp_half_mass": 0.49271619496741204,
+   "border_mass": 0.47659459344828753
+  },
+  {
+   "ordinal": 46,
+   "color": "black",
+   "n": 70,
+   "entropy_bits": 5.829547478216101,
+   "opp_half_mass": 0.5530186451006947,
+   "border_mass": 0.4787508722378074
+  },
+  {
+   "ordinal": 47,
+   "color": "white",
+   "n": 66,
+   "entropy_bits": 5.8385352352953515,
+   "opp_half_mass": 0.4926082500764592,
+   "border_mass": 0.47296787378251215
+  },
+  {
+   "ordinal": 47,
+   "color": "black",
+   "n": 66,
+   "entropy_bits": 5.833988699815967,
+   "opp_half_mass": 0.5537799616400717,
+   "border_mass": 0.4771826468552745
+  },
+  {
+   "ordinal": 48,
+   "color": "white",
+   "n": 63,
+   "entropy_bits": 5.828876479537134,
+   "opp_half_mass": 0.4952599540766742,
+   "border_mass": 0.4768172246625736
+  },
+  {
+   "ordinal": 48,
+   "color": "black",
+   "n": 61,
+   "entropy_bits": 5.833970102023544,
+   "opp_half_mass": 0.5494383669832386,
+   "border_mass": 0.4818655691399682
+  },
+  {
+   "ordinal": 49,
+   "color": "white",
+   "n": 61,
+   "entropy_bits": 5.835601384453325,
+   "opp_half_mass": 0.49420971700685007,
+   "border_mass": 0.47082679083219686
+  },
+  {
+   "ordinal": 49,
+   "color": "black",
+   "n": 60,
+   "entropy_bits": 5.835467034868902,
+   "opp_half_mass": 0.5436844103271141,
+   "border_mass": 0.4785469303567273
+  },
+  {
+   "ordinal": 50,
+   "color": "white",
+   "n": 58,
+   "entropy_bits": 5.847291220480118,
+   "opp_half_mass": 0.5007557353317931,
+   "border_mass": 0.47135703017983327
+  },
+  {
+   "ordinal": 50,
+   "color": "black",
+   "n": 58,
+   "entropy_bits": 5.835452566695889,
+   "opp_half_mass": 0.5512736045779532,
+   "border_mass": 0.47387809793320324
+  },
+  {
+   "ordinal": 51,
+   "color": "white",
+   "n": 57,
+   "entropy_bits": 5.843020784653708,
+   "opp_half_mass": 0.49293644570647493,
+   "border_mass": 0.47188991251842755
+  },
+  {
+   "ordinal": 51,
+   "color": "black",
+   "n": 55,
+   "entropy_bits": 5.825133807546988,
+   "opp_half_mass": 0.5588728107998825,
+   "border_mass": 0.484029847366566
+  },
+  {
+   "ordinal": 52,
+   "color": "white",
+   "n": 53,
+   "entropy_bits": 5.840058735180609,
+   "opp_half_mass": 0.4975882595897002,
+   "border_mass": 0.4689964816272962
+  },
+  {
+   "ordinal": 52,
+   "color": "black",
+   "n": 53,
+   "entropy_bits": 5.835179026857578,
+   "opp_half_mass": 0.5488003403264677,
+   "border_mass": 0.48250374517113603
+  },
+  {
+   "ordinal": 53,
+   "color": "white",
+   "n": 51,
+   "entropy_bits": 5.833228184133081,
+   "opp_half_mass": 0.5016575082771334,
+   "border_mass": 0.47702037686409027
+  },
+  {
+   "ordinal": 53,
+   "color": "black",
+   "n": 50,
+   "entropy_bits": 5.841436772556623,
+   "opp_half_mass": 0.5496593256900087,
+   "border_mass": 0.47625682652462276
+  },
+  {
+   "ordinal": 54,
+   "color": "white",
+   "n": 47,
+   "entropy_bits": 5.838819575621001,
+   "opp_half_mass": 0.4890498376322633,
+   "border_mass": 0.4723213448763845
+  },
+  {
+   "ordinal": 54,
+   "color": "black",
+   "n": 45,
+   "entropy_bits": 5.836602452632868,
+   "opp_half_mass": 0.5478921046092485,
+   "border_mass": 0.4795794898023208
+  },
+  {
+   "ordinal": 55,
+   "color": "white",
+   "n": 44,
+   "entropy_bits": 5.838497504679368,
+   "opp_half_mass": 0.49118640725447965,
+   "border_mass": 0.4612549830662002
+  },
+  {
+   "ordinal": 55,
+   "color": "black",
+   "n": 44,
+   "entropy_bits": 5.830174209163727,
+   "opp_half_mass": 0.5441451109575361,
+   "border_mass": 0.48936180682556535
+  },
+  {
+   "ordinal": 56,
+   "color": "white",
+   "n": 40,
+   "entropy_bits": 5.843190833392297,
+   "opp_half_mass": 0.489659067010507,
+   "border_mass": 0.46350159869180063
+  },
+  {
+   "ordinal": 56,
+   "color": "black",
+   "n": 39,
+   "entropy_bits": 5.826317100432523,
+   "opp_half_mass": 0.5546647023636465,
+   "border_mass": 0.4884285859745712
+  },
+  {
+   "ordinal": 57,
+   "color": "white",
+   "n": 36,
+   "entropy_bits": 5.849866477267907,
+   "opp_half_mass": 0.48740858156169353,
+   "border_mass": 0.467810754922943
+  },
+  {
+   "ordinal": 57,
+   "color": "black",
+   "n": 35,
+   "entropy_bits": 5.8322929740767115,
+   "opp_half_mass": 0.5550057951893125,
+   "border_mass": 0.4828407418515001
+  },
+  {
+   "ordinal": 58,
+   "color": "white",
+   "n": 34,
+   "entropy_bits": 5.8505202471785935,
+   "opp_half_mass": 0.49251274349551427,
+   "border_mass": 0.47271172216107304
+  },
+  {
+   "ordinal": 58,
+   "color": "black",
+   "n": 34,
+   "entropy_bits": 5.828185563686169,
+   "opp_half_mass": 0.5565742177833968,
+   "border_mass": 0.49354822652222696
+  },
+  {
+   "ordinal": 59,
+   "color": "white",
+   "n": 34,
+   "entropy_bits": 5.848924127119132,
+   "opp_half_mass": 0.48728398015544583,
+   "border_mass": 0.46894370136536
+  },
+  {
+   "ordinal": 59,
+   "color": "black",
+   "n": 32,
+   "entropy_bits": 5.825219778491932,
+   "opp_half_mass": 0.541100071346591,
+   "border_mass": 0.49122903444003896
+  },
+  {
+   "ordinal": 60,
+   "color": "white",
+   "n": 31,
+   "entropy_bits": 5.832235316582657,
+   "opp_half_mass": 0.49443385846942906,
+   "border_mass": 0.4815268306542308
+  },
+  {
+   "ordinal": 60,
+   "color": "black",
+   "n": 31,
+   "entropy_bits": 5.842854547535261,
+   "opp_half_mass": 0.535037336150004,
+   "border_mass": 0.4778701463533986
+  },
+  {
+   "ordinal": 61,
+   "color": "white",
+   "n": 29,
+   "entropy_bits": 5.844282603092143,
+   "opp_half_mass": 0.48981264580025113,
+   "border_mass": 0.4758531914317402
+  },
+  {
+   "ordinal": 61,
+   "color": "black",
+   "n": 28,
+   "entropy_bits": 5.843605646370635,
+   "opp_half_mass": 0.55448520758156,
+   "border_mass": 0.48651221604918
+  },
+  {
+   "ordinal": 62,
+   "color": "white",
+   "n": 28,
+   "entropy_bits": 5.836384463723134,
+   "opp_half_mass": 0.4828817027238464,
+   "border_mass": 0.47103328509755166
+  },
+  {
+   "ordinal": 62,
+   "color": "black",
+   "n": 25,
+   "entropy_bits": 5.82948475505547,
+   "opp_half_mass": 0.5621118546184153,
+   "border_mass": 0.4881009575445205
+  },
+  {
+   "ordinal": 63,
+   "color": "white",
+   "n": 24,
+   "entropy_bits": 5.844731448020295,
+   "opp_half_mass": 0.4974841414950788,
+   "border_mass": 0.4826783000122911
+  },
+  {
+   "ordinal": 63,
+   "color": "black",
+   "n": 24,
+   "entropy_bits": 5.841235442386264,
+   "opp_half_mass": 0.5633472597013073,
+   "border_mass": 0.48861469913390465
+  },
+  {
+   "ordinal": 64,
+   "color": "white",
+   "n": 24,
+   "entropy_bits": 5.851332796387584,
+   "opp_half_mass": 0.5009110683458857,
+   "border_mass": 0.4815385289839469
+  },
+  {
+   "ordinal": 64,
+   "color": "black",
+   "n": 23,
+   "entropy_bits": 5.849291624517053,
+   "opp_half_mass": 0.5603256965784923,
+   "border_mass": 0.48019337457726186
+  },
+  {
+   "ordinal": 65,
+   "color": "white",
+   "n": 23,
+   "entropy_bits": 5.841091398139537,
+   "opp_half_mass": 0.49204137209175236,
+   "border_mass": 0.4716377651177185
+  },
+  {
+   "ordinal": 65,
+   "color": "black",
+   "n": 23,
+   "entropy_bits": 5.8456789856897435,
+   "opp_half_mass": 0.5550047168002018,
+   "border_mass": 0.4896726962381407
+  },
+  {
+   "ordinal": 66,
+   "color": "white",
+   "n": 22,
+   "entropy_bits": 5.843871548116088,
+   "opp_half_mass": 0.49104452843312174,
+   "border_mass": 0.46655790957579896
+  },
+  {
+   "ordinal": 66,
+   "color": "black",
+   "n": 21,
+   "entropy_bits": 5.830713830812745,
+   "opp_half_mass": 0.5609323052755956,
+   "border_mass": 0.4893795216589102
+  },
+  {
+   "ordinal": 67,
+   "color": "white",
+   "n": 20,
+   "entropy_bits": 5.837683300429839,
+   "opp_half_mass": 0.48554055381100625,
+   "border_mass": 0.4745974606601521
+  },
+  {
+   "ordinal": 67,
+   "color": "black",
+   "n": 20,
+   "entropy_bits": 5.849710019098418,
+   "opp_half_mass": 0.5443160924362018,
+   "border_mass": 0.4825881168828346
+  },
+  {
+   "ordinal": 68,
+   "color": "white",
+   "n": 20,
+   "entropy_bits": 5.856289955063582,
+   "opp_half_mass": 0.4902086591348052,
+   "border_mass": 0.46373986201360823
+  },
+  {
+   "ordinal": 68,
+   "color": "black",
+   "n": 19,
+   "entropy_bits": 5.862092432755711,
+   "opp_half_mass": 0.5476898048563223,
+   "border_mass": 0.48253412159944054
+  },
+  {
+   "ordinal": 69,
+   "color": "white",
+   "n": 19,
+   "entropy_bits": 5.841713152634417,
+   "opp_half_mass": 0.49395067780278623,
+   "border_mass": 0.47501928229375107
+  },
+  {
+   "ordinal": 69,
+   "color": "black",
+   "n": 19,
+   "entropy_bits": 5.8487318001291,
+   "opp_half_mass": 0.5537659406637478,
+   "border_mass": 0.4801738813372427
+  },
+  {
+   "ordinal": 70,
+   "color": "white",
+   "n": 19,
+   "entropy_bits": 5.839334573391551,
+   "opp_half_mass": 0.4816893111105616,
+   "border_mass": 0.4764976501464844
+  },
+  {
+   "ordinal": 70,
+   "color": "black",
+   "n": 19,
+   "entropy_bits": 5.844998677558524,
+   "opp_half_mass": 0.5554758041337329,
+   "border_mass": 0.48576128438703325
+  },
+  {
+   "ordinal": 71,
+   "color": "white",
+   "n": 19,
+   "entropy_bits": 5.835262305407612,
+   "opp_half_mass": 0.4925575536847311,
+   "border_mass": 0.4716212265683632
+  },
+  {
+   "ordinal": 71,
+   "color": "black",
+   "n": 19,
+   "entropy_bits": 5.855789903995256,
+   "opp_half_mass": 0.5592486316117605,
+   "border_mass": 0.48160127606733066
+  },
+  {
+   "ordinal": 72,
+   "color": "white",
+   "n": 19,
+   "entropy_bits": 5.8419130535965325,
+   "opp_half_mass": 0.4917668884399494,
+   "border_mass": 0.4803141999229985
+  },
+  {
+   "ordinal": 72,
+   "color": "black",
+   "n": 19,
+   "entropy_bits": 5.848335818738323,
+   "opp_half_mass": 0.554675759478031,
+   "border_mass": 0.484883489736699
+  },
+  {
+   "ordinal": 73,
+   "color": "white",
+   "n": 19,
+   "entropy_bits": 5.8412458089832375,
+   "opp_half_mass": 0.509070673001636,
+   "border_mass": 0.4815433040310286
+  },
+  {
+   "ordinal": 73,
+   "color": "black",
+   "n": 19,
+   "entropy_bits": 5.84435568687463,
+   "opp_half_mass": 0.5515036442145509,
+   "border_mass": 0.4798228930632927
+  },
+  {
+   "ordinal": 74,
+   "color": "white",
+   "n": 19,
+   "entropy_bits": 5.839313406195408,
+   "opp_half_mass": 0.5008881803675506,
+   "border_mass": 0.47004220970465166
+  },
+  {
+   "ordinal": 74,
+   "color": "black",
+   "n": 19,
+   "entropy_bits": 5.863941845539648,
+   "opp_half_mass": 0.5550406445185408,
+   "border_mass": 0.48029878246597946
+  },
+  {
+   "ordinal": 75,
+   "color": "white",
+   "n": 19,
+   "entropy_bits": 5.836263767108195,
+   "opp_half_mass": 0.49079826204596383,
+   "border_mass": 0.48053840984051166
+  },
+  {
+   "ordinal": 75,
+   "color": "black",
+   "n": 18,
+   "entropy_bits": 5.835655939266725,
+   "opp_half_mass": 0.5627860596222389,
+   "border_mass": 0.48521927303065443
+  },
+  {
+   "ordinal": 76,
+   "color": "white",
+   "n": 18,
+   "entropy_bits": 5.8387490847742445,
+   "opp_half_mass": 0.48672239532849443,
+   "border_mass": 0.4749136805120442
+  },
+  {
+   "ordinal": 76,
+   "color": "black",
+   "n": 18,
+   "entropy_bits": 5.846027943814216,
+   "opp_half_mass": 0.5546324900610166,
+   "border_mass": 0.48637017651668024
+  },
+  {
+   "ordinal": 77,
+   "color": "white",
+   "n": 18,
+   "entropy_bits": 5.843370847567722,
+   "opp_half_mass": 0.4849651945082264,
+   "border_mass": 0.46625696148516405
+  },
+  {
+   "ordinal": 77,
+   "color": "black",
+   "n": 17,
+   "entropy_bits": 5.852556148669969,
+   "opp_half_mass": 0.5436044003376189,
+   "border_mass": 0.5005290831220063
+  },
+  {
+   "ordinal": 78,
+   "color": "white",
+   "n": 16,
+   "entropy_bits": 5.838325743480471,
+   "opp_half_mass": 0.4850869286165107,
+   "border_mass": 0.47221611949498765
+  },
+  {
+   "ordinal": 78,
+   "color": "black",
+   "n": 15,
+   "entropy_bits": 5.833847332655254,
+   "opp_half_mass": 0.5576320649124682,
+   "border_mass": 0.50071379262954
+  },
+  {
+   "ordinal": 79,
+   "color": "white",
+   "n": 15,
+   "entropy_bits": 5.851827166235358,
+   "opp_half_mass": 0.4970272816251963,
+   "border_mass": 0.4569443826563656
+  },
+  {
+   "ordinal": 79,
+   "color": "black",
+   "n": 15,
+   "entropy_bits": 5.809810679448217,
+   "opp_half_mass": 0.5650221876023959,
+   "border_mass": 0.5178287398070097
+  },
+  {
+   "ordinal": 80,
+   "color": "white",
+   "n": 15,
+   "entropy_bits": 5.82220679263216,
+   "opp_half_mass": 0.5032508702172588,
+   "border_mass": 0.47546621346846224
+  },
+  {
+   "ordinal": 80,
+   "color": "black",
+   "n": 15,
+   "entropy_bits": 5.857707713953439,
+   "opp_half_mass": 0.5457369737482319,
+   "border_mass": 0.4944477687822655
+  },
+  {
+   "ordinal": 81,
+   "color": "white",
+   "n": 15,
+   "entropy_bits": 5.841336466461796,
+   "opp_half_mass": 0.49068191736005246,
+   "border_mass": 0.4765695157305648
+  },
+  {
+   "ordinal": 81,
+   "color": "black",
+   "n": 15,
+   "entropy_bits": 5.839666318397977,
+   "opp_half_mass": 0.5581153134039293,
+   "border_mass": 0.48885801491172365
+  },
+  {
+   "ordinal": 82,
+   "color": "white",
+   "n": 13,
+   "entropy_bits": 5.837267193335675,
+   "opp_half_mass": 0.4954968262463808,
+   "border_mass": 0.48994141433817834
+  },
+  {
+   "ordinal": 82,
+   "color": "black",
+   "n": 12,
+   "entropy_bits": 5.8595367089348285,
+   "opp_half_mass": 0.5517148472329912,
+   "border_mass": 0.4858862997110312
+  },
+  {
+   "ordinal": 83,
+   "color": "white",
+   "n": 12,
+   "entropy_bits": 5.833053286738202,
+   "opp_half_mass": 0.49651849130168557,
+   "border_mass": 0.4675837991332325
+  },
+  {
+   "ordinal": 83,
+   "color": "black",
+   "n": 12,
+   "entropy_bits": 5.851894277556986,
+   "opp_half_mass": 0.5590976320478754,
+   "border_mass": 0.49831315481181565
+  },
+  {
+   "ordinal": 84,
+   "color": "white",
+   "n": 11,
+   "entropy_bits": 5.845551734266062,
+   "opp_half_mass": 0.5001434743912383,
+   "border_mass": 0.4553415323184295
+  },
+  {
+   "ordinal": 84,
+   "color": "black",
+   "n": 11,
+   "entropy_bits": 5.849330242132985,
+   "opp_half_mass": 0.5411511033731089,
+   "border_mass": 0.492562477836724
+  },
+  {
+   "ordinal": 85,
+   "color": "white",
+   "n": 11,
+   "entropy_bits": 5.846278995407373,
+   "opp_half_mass": 0.4975497289560735,
+   "border_mass": 0.476145356470211
+  },
+  {
+   "ordinal": 85,
+   "color": "black",
+   "n": 11,
+   "entropy_bits": 5.850086179824553,
+   "opp_half_mass": 0.5629032064779577,
+   "border_mass": 0.48512306684543466
+  },
+  {
+   "ordinal": 86,
+   "color": "white",
+   "n": 11,
+   "entropy_bits": 5.8412319115225735,
+   "opp_half_mass": 0.48815699692138215,
+   "border_mass": 0.4628235417291183
+  },
+  {
+   "ordinal": 86,
+   "color": "black",
+   "n": 11,
+   "entropy_bits": 5.87584006118922,
+   "opp_half_mass": 0.5532221296294169,
+   "border_mass": 0.47038126417266374
+  },
+  {
+   "ordinal": 87,
+   "color": "white",
+   "n": 11,
+   "entropy_bits": 5.854549019234708,
+   "opp_half_mass": 0.4794936007185077,
+   "border_mass": 0.4676141364880922
+  },
+  {
+   "ordinal": 87,
+   "color": "black",
+   "n": 11,
+   "entropy_bits": 5.855776578053013,
+   "opp_half_mass": 0.5557322218506173,
+   "border_mass": 0.4908101468093016
+  },
+  {
+   "ordinal": 88,
+   "color": "white",
+   "n": 11,
+   "entropy_bits": 5.861870909286505,
+   "opp_half_mass": 0.49516915292902425,
+   "border_mass": 0.45623362985100935
+  },
+  {
+   "ordinal": 88,
+   "color": "black",
+   "n": 11,
+   "entropy_bits": 5.8295957129996845,
+   "opp_half_mass": 0.5686335489365526,
+   "border_mass": 0.5066971444863487
+  },
+  {
+   "ordinal": 89,
+   "color": "white",
+   "n": 11,
+   "entropy_bits": 5.852164798898834,
+   "opp_half_mass": 0.49064341780136933,
+   "border_mass": 0.46236553631553595
+  },
+  {
+   "ordinal": 89,
+   "color": "black",
+   "n": 11,
+   "entropy_bits": 5.863985132811004,
+   "opp_half_mass": 0.5473954383156855,
+   "border_mass": 0.4891860233619809
+  },
+  {
+   "ordinal": 90,
+   "color": "white",
+   "n": 11,
+   "entropy_bits": 5.859797376347927,
+   "opp_half_mass": 0.4940096551806412,
+   "border_mass": 0.4494937215085057
+  },
+  {
+   "ordinal": 90,
+   "color": "black",
+   "n": 11,
+   "entropy_bits": 5.837621651497054,
+   "opp_half_mass": 0.5675975790204988,
+   "border_mass": 0.49122326812622225
+  },
+  {
+   "ordinal": 91,
+   "color": "white",
+   "n": 11,
+   "entropy_bits": 5.838962198566693,
+   "opp_half_mass": 0.4782479068857025,
+   "border_mass": 0.47105795572596515
+  },
+  {
+   "ordinal": 91,
+   "color": "black",
+   "n": 11,
+   "entropy_bits": 5.831485672008909,
+   "opp_half_mass": 0.5564132929589092,
+   "border_mass": 0.49329250904900784
+  },
+  {
+   "ordinal": 92,
+   "color": "white",
+   "n": 11,
+   "entropy_bits": 5.844583319832784,
+   "opp_half_mass": 0.4872139956463467,
+   "border_mass": 0.4687092491129244
+  },
+  {
+   "ordinal": 92,
+   "color": "black",
+   "n": 11,
+   "entropy_bits": 5.859292045665268,
+   "opp_half_mass": 0.5402838624802164,
+   "border_mass": 0.4790161972950128
+  },
+  {
+   "ordinal": 93,
+   "color": "white",
+   "n": 11,
+   "entropy_bits": 5.853578121730385,
+   "opp_half_mass": 0.49681241979653185,
+   "border_mass": 0.4511683405884965
+  },
+  {
+   "ordinal": 93,
+   "color": "black",
+   "n": 11,
+   "entropy_bits": 5.863489065893267,
+   "opp_half_mass": 0.5543733458034694,
+   "border_mass": 0.47570556292141025
+  },
+  {
+   "ordinal": 94,
+   "color": "white",
+   "n": 11,
+   "entropy_bits": 5.860177455516436,
+   "opp_half_mass": 0.4898146002299406,
+   "border_mass": 0.45888281279158866
+  },
+  {
+   "ordinal": 94,
+   "color": "black",
+   "n": 9,
+   "entropy_bits": 5.8339411397353835,
+   "opp_half_mass": 0.5592931944669949,
+   "border_mass": 0.5175107259613773
+  },
+  {
+   "ordinal": 95,
+   "color": "white",
+   "n": 8,
+   "entropy_bits": 5.864420757702005,
+   "opp_half_mass": 0.49736379634123296,
+   "border_mass": 0.4604308240232058
+  },
+  {
+   "ordinal": 95,
+   "color": "black",
+   "n": 8,
+   "entropy_bits": 5.839534545273305,
+   "opp_half_mass": 0.5604086745879613,
+   "border_mass": 0.5056641354749445
+  },
+  {
+   "ordinal": 96,
+   "color": "white",
+   "n": 8,
+   "entropy_bits": 5.854212932355125,
+   "opp_half_mass": 0.47117670433362946,
+   "border_mass": 0.46770301926881075
+  },
+  {
+   "ordinal": 96,
+   "color": "black",
+   "n": 8,
+   "entropy_bits": 5.850761766969457,
+   "opp_half_mass": 0.5463240826356923,
+   "border_mass": 0.49047591566341
+  },
+  {
+   "ordinal": 97,
+   "color": "white",
+   "n": 8,
+   "entropy_bits": 5.838400171418355,
+   "opp_half_mass": 0.4913246279757004,
+   "border_mass": 0.47935739954118617
+  },
+  {
+   "ordinal": 97,
+   "color": "black",
+   "n": 7,
+   "entropy_bits": 5.853574985482484,
+   "opp_half_mass": 0.5298266284433859,
+   "border_mass": 0.4864282987878791
+  },
+  {
+   "ordinal": 98,
+   "color": "white",
+   "n": 7,
+   "entropy_bits": 5.854300219911869,
+   "opp_half_mass": 0.48910787708259057,
+   "border_mass": 0.4748957548955722
+  },
+  {
+   "ordinal": 98,
+   "color": "black",
+   "n": 7,
+   "entropy_bits": 5.821101107581337,
+   "opp_half_mass": 0.5488471955925759,
+   "border_mass": 0.5140166801533529
+  },
+  {
+   "ordinal": 99,
+   "color": "white",
+   "n": 7,
+   "entropy_bits": 5.8672373858987665,
+   "opp_half_mass": 0.4797523368615657,
+   "border_mass": 0.45722185354679823
+  },
+  {
+   "ordinal": 99,
+   "color": "black",
+   "n": 7,
+   "entropy_bits": 5.858037259306628,
+   "opp_half_mass": 0.5526584418424006,
+   "border_mass": 0.5004250892837133
+  },
+  {
+   "ordinal": 100,
+   "color": "white",
+   "n": 7,
+   "entropy_bits": 5.834177426636752,
+   "opp_half_mass": 0.47037960961461067,
+   "border_mass": 0.4876257009538157
+  },
+  {
+   "ordinal": 100,
+   "color": "black",
+   "n": 7,
+   "entropy_bits": 5.857899399239442,
+   "opp_half_mass": 0.5497626378200948,
+   "border_mass": 0.4755334967215146
+  },
+  {
+   "ordinal": 101,
+   "color": "white",
+   "n": 7,
+   "entropy_bits": 5.845313865700851,
+   "opp_half_mass": 0.47813816365253714,
+   "border_mass": 0.46710474153847564
+  },
+  {
+   "ordinal": 101,
+   "color": "black",
+   "n": 7,
+   "entropy_bits": 5.855790547906423,
+   "opp_half_mass": 0.5607623907937003,
+   "border_mass": 0.47975218182961854
+  },
+  {
+   "ordinal": 102,
+   "color": "white",
+   "n": 7,
+   "entropy_bits": 5.821370349584782,
+   "opp_half_mass": 0.5021868332488728,
+   "border_mass": 0.47604522993788123
+  },
+  {
+   "ordinal": 102,
+   "color": "black",
+   "n": 6,
+   "entropy_bits": 5.876603033833658,
+   "opp_half_mass": 0.5500574553540597,
+   "border_mass": 0.4777765284913282
+  },
+  {
+   "ordinal": 103,
+   "color": "white",
+   "n": 6,
+   "entropy_bits": 5.823037501313578,
+   "opp_half_mass": 0.4993815307194988,
+   "border_mass": 0.49488663269827765
+  },
+  {
+   "ordinal": 103,
+   "color": "black",
+   "n": 6,
+   "entropy_bits": 5.865293658056049,
+   "opp_half_mass": 0.5470597967117404,
+   "border_mass": 0.49175493729611236
+  },
+  {
+   "ordinal": 104,
+   "color": "white",
+   "n": 6,
+   "entropy_bits": 5.836308484878167,
+   "opp_half_mass": 0.5267471213980267,
+   "border_mass": 0.4719623103737831
+  },
+  {
+   "ordinal": 104,
+   "color": "black",
+   "n": 5,
+   "entropy_bits": 5.860999584073717,
+   "opp_half_mass": 0.542773345997557,
+   "border_mass": 0.4844607991166413
+  },
+  {
+   "ordinal": 105,
+   "color": "white",
+   "n": 5,
+   "entropy_bits": 5.812281580398702,
+   "opp_half_mass": 0.5060422556009143,
+   "border_mass": 0.48986593089066444
+  },
+  {
+   "ordinal": 105,
+   "color": "black",
+   "n": 5,
+   "entropy_bits": 5.850717730016333,
+   "opp_half_mass": 0.5659132227301598,
+   "border_mass": 0.49736976008862255
+  },
+  {
+   "ordinal": 106,
+   "color": "white",
+   "n": 5,
+   "entropy_bits": 5.8375745386020315,
+   "opp_half_mass": 0.484347142605111,
+   "border_mass": 0.49221243876963855
+  },
+  {
+   "ordinal": 106,
+   "color": "black",
+   "n": 5,
+   "entropy_bits": 5.851866122892792,
+   "opp_half_mass": 0.5918429817073048,
+   "border_mass": 0.494361243955791
+  },
+  {
+   "ordinal": 107,
+   "color": "white",
+   "n": 5,
+   "entropy_bits": 5.8413203378986704,
+   "opp_half_mass": 0.4923795365728438,
+   "border_mass": 0.4662611628882587
+  },
+  {
+   "ordinal": 107,
+   "color": "black",
+   "n": 5,
+   "entropy_bits": 5.8756750843946834,
+   "opp_half_mass": 0.5563036610372365,
+   "border_mass": 0.47989690941758456
+  },
+  {
+   "ordinal": 108,
+   "color": "white",
+   "n": 5,
+   "entropy_bits": 5.854019453778164,
+   "opp_half_mass": 0.4624558927956969,
+   "border_mass": 0.46990986042656
+  },
+  {
+   "ordinal": 108,
+   "color": "black",
+   "n": 5,
+   "entropy_bits": 5.888546805020786,
+   "opp_half_mass": 0.5609484770335257,
+   "border_mass": 0.4704326714389026
+  },
+  {
+   "ordinal": 109,
+   "color": "white",
+   "n": 5,
+   "entropy_bits": 5.856818703176211,
+   "opp_half_mass": 0.4597499550320208,
+   "border_mass": 0.4698335053399205
+  },
+  {
+   "ordinal": 109,
+   "color": "black",
+   "n": 5,
+   "entropy_bits": 5.868942235869376,
+   "opp_half_mass": 0.5499984433874487,
+   "border_mass": 0.48778554871678353
+  },
+  {
+   "ordinal": 110,
+   "color": "white",
+   "n": 5,
+   "entropy_bits": 5.864941027230603,
+   "opp_half_mass": 0.4901585737708956,
+   "border_mass": 0.47203553495928646
+  },
+  {
+   "ordinal": 110,
+   "color": "black",
+   "n": 5,
+   "entropy_bits": 5.886743276320141,
+   "opp_half_mass": 0.5303170598112047,
+   "border_mass": 0.4788954706862569
+  },
+  {
+   "ordinal": 111,
+   "color": "white",
+   "n": 5,
+   "entropy_bits": 5.870832106804638,
+   "opp_half_mass": 0.48252479373477397,
+   "border_mass": 0.44804939278401434
+  }
+ ],
+ "capture": {
+  "n": 6452,
+  "coverage_mean": 0.1182763021944048,
+  "chance_mean": 0.11455571537929647,
+  "lift": 1.0324784040917503
+ }
+}
