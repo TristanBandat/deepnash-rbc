@@ -219,7 +219,9 @@ def _():
         "gru": "GRU", "lstm": "LSTM", "transformer": "TFM", "xlstm": "xLSTM",
     }
     ALIAS_OVERRIDE = {
-        "v0.14.0": "CNN·η0.5·best·s0",  # top of the seed distribution (see thesis)
+        # The thesis's main model (ladder V9). Was tagged "best" while
+        # v0.27.0_80k (its seed replicate, ladder V4) held that role.
+        "v0.14.0": "CNN·η0.5·main·s0",
     }
 
     def core_alias(cfg: dict) -> str:
